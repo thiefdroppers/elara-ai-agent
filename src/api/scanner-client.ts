@@ -5,6 +5,7 @@
  * Provides hybrid and deep scan capabilities with proper error handling.
  */
 
+import { authClient } from './auth-client';
 import type {
   HybridScanRequest,
   HybridScanResponse,
@@ -30,7 +31,6 @@ const RETRY_DELAY_MS = 1000;
 // ============================================================================
 
 class ScannerClient {
-  private authToken: string | null = null;
   private isInitialized = false;
 
   // --------------------------------------------------------------------------
@@ -41,26 +41,13 @@ class ScannerClient {
     if (this.isInitialized) return;
 
     try {
-      // Try to load auth token from secure storage
-      if (typeof chrome !== 'undefined' && chrome.storage) {
-        const result = await chrome.storage.local.get(['elara_auth_token']);
-        if (result.elara_auth_token) {
-          this.authToken = result.elara_auth_token;
-        }
-      }
+      // Initialize auth client
+      await authClient.initialize();
       this.isInitialized = true;
-      console.log('[ScannerClient] Initialized', this.authToken ? 'with auth' : 'without auth');
+      console.log('[ScannerClient] Initialized');
     } catch (error) {
       console.error('[ScannerClient] Initialization failed:', error);
       this.isInitialized = true; // Still mark as initialized
-    }
-  }
-
-  setAuthToken(token: string): void {
-    this.authToken = token;
-    // Persist to storage
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      chrome.storage.local.set({ elara_auth_token: token });
     }
   }
 
@@ -172,13 +159,47 @@ class ScannerClient {
         severity: 'high',
         description: 'URL uses IP address instead of domain name',
       });
-      riskScore += 0.25;
+      riskScore += 0.30;
       reasoning.push('Uses IP address instead of domain');
+    }
+
+    // =========================================================================
+    // TYPOSQUATTING DETECTION - Critical for detecting kbb-vision.com type attacks
+    // =========================================================================
+    const knownBrands = [
+      { domain: 'kbb.com', name: 'Kelley Blue Book' },
+      { domain: 'paypal.com', name: 'PayPal' },
+      { domain: 'amazon.com', name: 'Amazon' },
+      { domain: 'microsoft.com', name: 'Microsoft' },
+      { domain: 'google.com', name: 'Google' },
+      { domain: 'apple.com', name: 'Apple' },
+      { domain: 'facebook.com', name: 'Facebook' },
+      { domain: 'netflix.com', name: 'Netflix' },
+      { domain: 'chase.com', name: 'Chase Bank' },
+      { domain: 'wellsfargo.com', name: 'Wells Fargo' },
+      { domain: 'bankofamerica.com', name: 'Bank of America' },
+    ];
+
+    for (const brand of knownBrands) {
+      const brandName = brand.domain.split('.')[0];
+      // Check for brand name with hyphen or other separator (e.g., kbb-vision)
+      if (hostname.includes(brandName) && hostname !== brand.domain && !hostname.endsWith(`.${brand.domain}`)) {
+        indicators.push({
+          type: 'typosquatting',
+          value: hostname,
+          severity: 'critical',
+          description: `Possible typosquatting attempt on ${brand.name} (${brand.domain})`,
+        });
+        riskScore += 0.45;
+        reasoning.push(`CRITICAL: Possible typosquatting attempt on ${brand.name}`);
+        reasoning.push(`Legitimate domain: ${brand.domain}, Suspicious: ${hostname}`);
+        break;
+      }
     }
 
     // Check for suspicious TLD
     const tld = hostname.split('.').pop() || '';
-    const riskyTLDs = ['tk', 'ml', 'ga', 'cf', 'gq', 'xyz', 'top', 'work', 'click'];
+    const riskyTLDs = ['tk', 'ml', 'ga', 'cf', 'gq', 'xyz', 'top', 'work', 'click', 'info', 'online', 'site', 'vip'];
     if (riskyTLDs.includes(tld)) {
       indicators.push({
         type: 'risky_tld',
@@ -186,8 +207,8 @@ class ScannerClient {
         severity: 'medium',
         description: `High-risk TLD: .${tld}`,
       });
-      riskScore += 0.15;
-      reasoning.push(`High-risk TLD: .${tld}`);
+      riskScore += 0.20;
+      reasoning.push(`High-risk TLD: .${tld} (commonly used in phishing)`);
     }
 
     // Check for excessive subdomains
@@ -199,14 +220,15 @@ class ScannerClient {
         severity: 'medium',
         description: `Excessive subdomains: ${subdomainCount}`,
       });
-      riskScore += 0.1;
-      reasoning.push(`${subdomainCount} subdomains detected`);
+      riskScore += 0.15;
+      reasoning.push(`${subdomainCount} subdomains detected (sign of subdomain abuse)`);
     }
 
     // Check for suspicious keywords
     const suspiciousKeywords = [
       'login', 'signin', 'account', 'verify', 'secure', 'update',
       'confirm', 'banking', 'paypal', 'amazon', 'microsoft', 'google',
+      'password', 'wallet', 'auth', 'credential',
     ];
     const foundKeywords = suspiciousKeywords.filter(kw =>
       hostname.includes(kw) || parsedUrl.pathname.includes(kw)
@@ -215,24 +237,53 @@ class ScannerClient {
       indicators.push({
         type: 'suspicious_keywords',
         value: foundKeywords.join(', '),
-        severity: 'medium',
+        severity: foundKeywords.length >= 2 ? 'high' : 'medium',
         description: `Suspicious keywords: ${foundKeywords.join(', ')}`,
       });
-      riskScore += 0.1 * foundKeywords.length;
+      riskScore += 0.15 * foundKeywords.length;
       reasoning.push(`Contains ${foundKeywords.length} suspicious keywords`);
     }
 
-    // Check for hyphens (typosquatting indicator)
+    // Check for hyphens (typosquatting indicator) - CRITICAL for kbb-vision detection
     const hyphenCount = (hostname.match(/-/g) || []).length;
-    if (hyphenCount > 2) {
-      indicators.push({
-        type: 'excessive_hyphens',
-        value: String(hyphenCount),
-        severity: 'low',
-        description: `Excessive hyphens in domain: ${hyphenCount}`,
-      });
-      riskScore += 0.05;
-      reasoning.push(`${hyphenCount} hyphens in domain`);
+    if (hyphenCount >= 1) {
+      // Even one hyphen is suspicious for known brands
+      const hasBrandName = knownBrands.some(brand => hostname.includes(brand.domain.split('.')[0]));
+      if (hasBrandName && hyphenCount >= 1) {
+        indicators.push({
+          type: 'suspicious_hyphens',
+          value: String(hyphenCount),
+          severity: 'high',
+          description: `Domain contains hyphen with brand name - likely typosquatting`,
+        });
+        riskScore += 0.30;
+        reasoning.push(`Hyphenated brand name (common typosquatting technique)`);
+      } else if (hyphenCount > 2) {
+        indicators.push({
+          type: 'excessive_hyphens',
+          value: String(hyphenCount),
+          severity: 'medium',
+          description: `Excessive hyphens in domain: ${hyphenCount}`,
+        });
+        riskScore += 0.10;
+        reasoning.push(`${hyphenCount} hyphens in domain`);
+      }
+    }
+
+    // Check for numbers in domain (suspicious for brands)
+    const digitCount = (hostname.match(/\d/g) || []).length;
+    if (digitCount > 0) {
+      const hasBrandName = knownBrands.some(brand => hostname.includes(brand.domain.split('.')[0]));
+      if (hasBrandName) {
+        indicators.push({
+          type: 'suspicious_digits',
+          value: String(digitCount),
+          severity: 'medium',
+          description: `Brand name with digits - possible typosquatting`,
+        });
+        riskScore += 0.15;
+        reasoning.push(`Brand domain with numbers (suspicious pattern)`);
+      }
     }
 
     // Check for HTTPS
@@ -338,13 +389,17 @@ class ScannerClient {
     retries = MAX_RETRIES
   ): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
+
+    // Get valid auth token
+    const token = await authClient.ensureValidToken();
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
 
-    if (this.authToken) {
-      headers['Authorization'] = `Bearer ${this.authToken}`;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
     const controller = new AbortController();
@@ -361,6 +416,7 @@ class ScannerClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`[ScannerClient] API error ${response.status}:`, errorText);
         throw new Error(`API error ${response.status}: ${errorText}`);
       }
 
