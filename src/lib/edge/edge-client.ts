@@ -186,11 +186,11 @@ export class EdgeClient {
    */
   private extractIndicators(
     prediction: EdgePrediction
-  ): Array<{ type: string; value: string; severity: string; description: string }> {
+  ): Array<{ type: string; value: string; severity: 'low' | 'medium' | 'high' | 'critical'; description: string }> {
     const indicators: Array<{
       type: string;
       value: string;
-      severity: string;
+      severity: 'low' | 'medium' | 'high' | 'critical';
       description: string;
     }> = [];
 

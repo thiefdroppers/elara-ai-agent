@@ -1,20 +1,26 @@
 /**
  * Elara AI Agent - Authentication Client
  *
- * Handles OAuth2 authentication with the Elara Platform API.
- * Supports password grant flow and automatic token refresh.
+ * Handles CSRF + session-based authentication with the Elara Platform API.
+ * Based on working Python implementation in test_ti_lookup.py
  */
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
-interface TokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-  refresh_token?: string;
-  scope?: string;
+interface LoginResponse {
+  success: boolean;
+  accessToken: string;
+  user?: {
+    id: string;
+    email: string;
+    role: string;
+  };
+}
+
+interface CSRFResponse {
+  csrfToken: string;
 }
 
 interface AuthCredentials {
@@ -26,8 +32,7 @@ interface AuthCredentials {
 // CONFIGURATION
 // ============================================================================
 
-const API_BASE_URL = 'https://dev-api.thiefdroppers.com/api/v2';
-const CLIENT_ID = 'elara-extension';
+const API_BASE_URL = 'https://dev-api.thiefdroppers.com';
 
 // Default admin credentials (as per CLAUDE.md)
 const DEFAULT_CREDENTIALS: AuthCredentials = {
@@ -41,7 +46,8 @@ const DEFAULT_CREDENTIALS: AuthCredentials = {
 
 class AuthClient {
   private accessToken: string | null = null;
-  private refreshToken: string | null = null;
+  private csrfToken: string | null = null;
+  private sessionCookie: string | null = null;
   private tokenExpiry: number = 0;
   private isInitialized = false;
 
@@ -57,20 +63,23 @@ class AuthClient {
       if (typeof chrome !== 'undefined' && chrome.storage) {
         const result = await chrome.storage.local.get([
           'elara_access_token',
-          'elara_refresh_token',
+          'elara_csrf_token',
+          'elara_session_cookie',
           'elara_token_expiry',
         ]);
 
         if (result.elara_access_token) {
           this.accessToken = result.elara_access_token;
-          this.refreshToken = result.elara_refresh_token || null;
+          this.csrfToken = result.elara_csrf_token || null;
+          this.sessionCookie = result.elara_session_cookie || null;
           this.tokenExpiry = result.elara_token_expiry || 0;
 
           console.log('[AuthClient] Restored tokens from storage');
 
           // Check if token is expired
           if (this.isTokenExpired()) {
-            console.log('[AuthClient] Stored token expired, will refresh on first use');
+            console.log('[AuthClient] Stored token expired, will re-authenticate on first use');
+            this.accessToken = null;
           }
         }
       }
@@ -84,40 +93,93 @@ class AuthClient {
   }
 
   // --------------------------------------------------------------------------
-  // Authentication Flow
+  // Authentication Flow (CSRF + Session-based)
   // --------------------------------------------------------------------------
 
   async login(credentials?: AuthCredentials): Promise<{ success: boolean; error?: string }> {
     const creds = credentials || DEFAULT_CREDENTIALS;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/auth/token`, {
+      console.log('[AuthClient] Starting login flow...');
+
+      // Step 1: Get CSRF token
+      const csrfToken = await this.fetchCSRFToken();
+      if (!csrfToken) {
+        return { success: false, error: 'Failed to obtain CSRF token' };
+      }
+
+      console.log('[AuthClient] Got CSRF token');
+      this.csrfToken = csrfToken;
+
+      // Step 2: Login with CSRF token
+      const response = await fetch(`${API_BASE_URL}/api/v2/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-CSRF-Token': csrfToken,
         },
         body: JSON.stringify({
-          grant_type: 'password',
           email: creds.email,
           password: creds.password,
-          client_id: CLIENT_ID,
         }),
+        credentials: 'include', // Important for cookies
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('[AuthClient] Login failed:', errorText);
+        console.error('[AuthClient] Login failed:', response.status, errorText);
         return { success: false, error: `Login failed: ${response.status}` };
       }
 
-      const data: TokenResponse = await response.json();
-      await this.storeTokens(data);
+      const data: LoginResponse = await response.json();
+
+      if (!data.success || !data.accessToken) {
+        return { success: false, error: 'No access token in response' };
+      }
+
+      // Extract session cookie from Set-Cookie header (if available)
+      const setCookie = response.headers.get('set-cookie');
+      if (setCookie) {
+        this.sessionCookie = setCookie;
+      }
+
+      await this.storeTokens({
+        accessToken: data.accessToken,
+        csrfToken,
+        sessionCookie: this.sessionCookie,
+      });
 
       console.log('[AuthClient] Login successful');
       return { success: true };
     } catch (error) {
       console.error('[AuthClient] Login error:', error);
       return { success: false, error: String(error) };
+    }
+  }
+
+  /**
+   * Fetch CSRF token from API
+   */
+  private async fetchCSRFToken(): Promise<string | null> {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/csrf-token`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        console.warn('[AuthClient] CSRF token fetch failed');
+        return null;
+      }
+
+      const data: CSRFResponse = await response.json();
+      return data.csrfToken || null;
+    } catch (error) {
+      console.error('[AuthClient] CSRF token fetch error:', error);
+      return null;
     }
   }
 
@@ -134,71 +196,40 @@ class AuthClient {
       }
     }
 
-    // If token is expired or about to expire (< 5 minutes), refresh it
+    // If token is expired or about to expire (< 5 minutes), re-authenticate
     if (this.isTokenExpired(300)) {
-      console.log('[AuthClient] Token expired or expiring soon, refreshing...');
-      const refreshed = await this.refreshAccessToken();
-      if (!refreshed) {
-        console.log('[AuthClient] Refresh failed, attempting re-login...');
-        const result = await this.login();
-        if (!result.success) {
-          console.error('[AuthClient] Re-login failed:', result.error);
-          return null;
-        }
+      console.log('[AuthClient] Token expired or expiring soon, re-authenticating...');
+      const result = await this.login();
+      if (!result.success) {
+        console.error('[AuthClient] Re-authentication failed:', result.error);
+        return null;
       }
     }
 
     return this.accessToken;
   }
 
-  async refreshAccessToken(): Promise<boolean> {
-    if (!this.refreshToken) {
-      console.warn('[AuthClient] No refresh token available');
-      return false;
-    }
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          grant_type: 'refresh_token',
-          refresh_token: this.refreshToken,
-        }),
-      });
-
-      if (!response.ok) {
-        console.error('[AuthClient] Token refresh failed:', response.status);
-        return false;
-      }
-
-      const data: TokenResponse = await response.json();
-      await this.storeTokens(data);
-
-      console.log('[AuthClient] Token refreshed successfully');
-      return true;
-    } catch (error) {
-      console.error('[AuthClient] Token refresh error:', error);
-      return false;
-    }
-  }
-
   // --------------------------------------------------------------------------
   // Token Management
   // --------------------------------------------------------------------------
 
-  private async storeTokens(data: TokenResponse): Promise<void> {
-    this.accessToken = data.access_token;
-    this.refreshToken = data.refresh_token || this.refreshToken;
-    this.tokenExpiry = Date.now() + data.expires_in * 1000;
+  private async storeTokens(data: {
+    accessToken: string;
+    csrfToken: string;
+    sessionCookie: string | null;
+  }): Promise<void> {
+    this.accessToken = data.accessToken;
+    this.csrfToken = data.csrfToken;
+    this.sessionCookie = data.sessionCookie;
+    // Set expiry to 24 hours from now (session-based, so conservative)
+    this.tokenExpiry = Date.now() + 24 * 60 * 60 * 1000;
 
     // Persist to storage
     if (typeof chrome !== 'undefined' && chrome.storage) {
       await chrome.storage.local.set({
         elara_access_token: this.accessToken,
-        elara_refresh_token: this.refreshToken,
+        elara_csrf_token: this.csrfToken,
+        elara_session_cookie: this.sessionCookie,
         elara_token_expiry: this.tokenExpiry,
       });
     }
@@ -215,15 +246,21 @@ class AuthClient {
     return this.accessToken;
   }
 
+  getCSRFToken(): string | null {
+    return this.csrfToken;
+  }
+
   async logout(): Promise<void> {
     this.accessToken = null;
-    this.refreshToken = null;
+    this.csrfToken = null;
+    this.sessionCookie = null;
     this.tokenExpiry = 0;
 
     if (typeof chrome !== 'undefined' && chrome.storage) {
       await chrome.storage.local.remove([
         'elara_access_token',
-        'elara_refresh_token',
+        'elara_csrf_token',
+        'elara_session_cookie',
         'elara_token_expiry',
       ]);
     }

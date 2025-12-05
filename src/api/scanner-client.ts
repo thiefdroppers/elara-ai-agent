@@ -58,24 +58,21 @@ class ScannerClient {
   async hybridScan(url: string): Promise<ScanResult> {
     await this.initialize();
 
-    const request: HybridScanRequest = {
-      url,
-      options: {
-        includeWhois: true,
-        maxRedirects: 5,
-      },
-    };
-
     try {
-      const response = await this.fetchWithRetry<HybridScanResponse>(
-        '/scanner/hybrid',
+      // Use TI lookup endpoint for hybrid scan (edge + TI enrichment)
+      const response = await this.fetchWithRetry<any>(
+        '/ti/lookup',
         {
           method: 'POST',
-          body: JSON.stringify(request),
+          body: JSON.stringify({ url }),
         }
       );
 
-      return response.result;
+      if (response.success && response.data) {
+        return this.convertTILookupToScanResult(url, response.data);
+      }
+
+      throw new Error('Invalid TI lookup response');
     } catch (error) {
       console.warn('[ScannerClient] Hybrid scan failed, using edge fallback:', error);
       return this.performEdgeFallback(url);
@@ -89,25 +86,189 @@ class ScannerClient {
   async deepScan(url: string): Promise<ScanResult> {
     await this.initialize();
 
-    const request: DeepScanRequest = {
-      url,
-      depth: 'comprehensive',
-    };
-
     try {
-      const response = await this.fetchWithRetry<DeepScanResponse>(
-        '/scanner/deep',
+      // Use Scanner V2 endpoint for deep scan
+      const response = await this.fetchWithRetry<any>(
+        '/scanner/v2/scan',
         {
           method: 'POST',
-          body: JSON.stringify(request),
+          body: JSON.stringify({
+            url,
+            options: {
+              skipScreenshot: false,
+              skipTLS: false,
+              skipWHOIS: false,
+              skipStage2: false,
+            },
+          }),
         }
       );
 
-      return response.result;
+      if (response.success !== false) {
+        return this.convertScannerV2ToScanResult(url, response);
+      }
+
+      throw new Error('Scanner V2 scan failed');
     } catch (error) {
       console.warn('[ScannerClient] Deep scan failed, using edge fallback:', error);
       return this.performEdgeFallback(url);
     }
+  }
+
+  /**
+   * Convert TI lookup response to ScanResult format
+   */
+  private convertTILookupToScanResult(url: string, data: any): ScanResult {
+    const startTime = performance.now();
+
+    const domain = data.domain || new URL(url).hostname;
+    const whitelist = data.whitelist;
+    const blacklist = data.blacklist;
+    const blacklistHits = data.blacklistHits || 0;
+    const whitelistHits = data.whitelistHits || 0;
+
+    let verdict: 'SAFE' | 'SUSPICIOUS' | 'DANGEROUS' | 'UNKNOWN' = 'UNKNOWN';
+    let riskScore = 0.5;
+    let threatType: string | undefined;
+    const indicators: ScanResult['indicators'] = [];
+    const reasoning: string[] = [];
+
+    if (whitelist) {
+      verdict = 'SAFE';
+      riskScore = 0.1;
+      reasoning.push(`Whitelisted by ${whitelist.source}`);
+      reasoning.push(`Confidence: ${whitelist.confidence}%`);
+      if (whitelist.reason) {
+        reasoning.push(whitelist.reason);
+      }
+      indicators.push({
+        type: 'whitelist',
+        value: domain,
+        severity: 'low',
+        description: `Whitelisted by ${whitelist.source}`,
+      });
+    } else if (blacklist) {
+      verdict = 'DANGEROUS';
+      riskScore = 0.9;
+      threatType = blacklist.threatType || 'phishing';
+      reasoning.push(`Blacklisted by ${blacklist.source}`);
+      reasoning.push(`Threat Type: ${blacklist.threatType}`);
+      reasoning.push(`Severity: ${blacklist.severity}`);
+      reasoning.push(`Confidence: ${blacklist.confidence}%`);
+      indicators.push({
+        type: 'blacklist',
+        value: domain,
+        severity: 'critical',
+        description: `Blacklisted - ${blacklist.threatType}`,
+      });
+    } else if (blacklistHits > 0 || whitelistHits > 0) {
+      // Has some TI hits but not definitive
+      if (blacklistHits > whitelistHits) {
+        verdict = 'SUSPICIOUS';
+        riskScore = 0.65;
+        reasoning.push(`${blacklistHits} blacklist indicators found`);
+      } else {
+        verdict = 'SAFE';
+        riskScore = 0.25;
+        reasoning.push(`${whitelistHits} whitelist indicators found`);
+      }
+    }
+
+    // Add source information
+    const sources = data.sources || {};
+    if (sources.tier1 && sources.tier1.length > 0) {
+      reasoning.push(`Tier-1 sources checked: ${sources.tier1.length}`);
+      sources.tier1.slice(0, 3).forEach((src: any) => {
+        indicators.push({
+          type: 'ti_source',
+          value: src.name,
+          severity: src.classification === 'blacklist' ? 'high' : 'low',
+          description: `${src.name}: ${src.classification}`,
+        });
+      });
+    }
+
+    const latency = performance.now() - startTime;
+
+    return {
+      url,
+      verdict,
+      riskLevel: this.getRiskLevel(riskScore),
+      riskScore,
+      confidence: 0.85, // TI lookups have high confidence
+      threatType,
+      indicators,
+      reasoning,
+      scanType: 'hybrid',
+      latency,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Convert Scanner V2 response to ScanResult format
+   */
+  private convertScannerV2ToScanResult(url: string, data: any): ScanResult {
+    const riskScore = data.riskScore || data.probability || 0.5;
+    const verdict = data.decision === 'BLOCK' ? 'DANGEROUS' :
+                    data.decision === 'WARN' ? 'SUSPICIOUS' :
+                    data.isPhishing ? 'DANGEROUS' : 'SAFE';
+    const riskLevel = data.riskLevel || this.getRiskLevel(riskScore);
+
+    const indicators: ScanResult['indicators'] = [];
+    const reasoning: string[] = [];
+
+    // Add TI data
+    const tiData = data.tiData || data.threatIntelligence || {};
+    if (tiData.blacklistHits > 0) {
+      reasoning.push(`${tiData.blacklistHits} threat intelligence blacklist hits`);
+      if (tiData.hasDualTier1) {
+        indicators.push({
+          type: 'ti_critical',
+          value: 'Dual Tier-1 blacklist',
+          severity: 'critical',
+          description: 'Multiple high-confidence threat sources flagged this URL',
+        });
+      }
+    }
+
+    // Add ML model consensus
+    if (data.modelConsensus) {
+      reasoning.push(`ML model agreement: ${data.modelConsensus.agreement}`);
+    }
+
+    // Add category results
+    const categories = data.categoryResults || data.threatCategories || {};
+    Object.entries(categories).forEach(([category, result]: [string, any]) => {
+      const score = typeof result === 'object' ? result.score : result;
+      if (score > 0.7) {
+        indicators.push({
+          type: 'threat_category',
+          value: category,
+          severity: 'high',
+          description: `${category}: ${(score * 100).toFixed(1)}%`,
+        });
+      }
+    });
+
+    // Add summary
+    if (data.summary || data.geminiSummary) {
+      reasoning.push(data.summary || data.geminiSummary);
+    }
+
+    return {
+      url,
+      verdict,
+      riskLevel,
+      riskScore,
+      confidence: data.confidenceInterval ? 0.95 : 0.85,
+      threatType: data.isPhishing ? 'phishing' : undefined,
+      indicators,
+      reasoning,
+      scanType: 'deep',
+      latency: data.metadata?.scanDuration || 0,
+      timestamp: Date.now(),
+    };
   }
 
   // --------------------------------------------------------------------------

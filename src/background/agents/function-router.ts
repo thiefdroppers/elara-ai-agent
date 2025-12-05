@@ -243,34 +243,34 @@ export class FunctionRouter {
   ): Promise<any> {
     switch (functionName) {
       case 'scan_url':
-        return this.scanURL(parameters);
+        return this.scanURL(parameters as { url: string; scan_type?: 'auto' | 'edge' | 'hybrid' | 'deep' });
 
       case 'search_threat_intelligence':
-        return this.searchTI(parameters);
+        return this.searchTI(parameters as { indicator: string; indicator_type?: string });
 
       case 'analyze_image':
-        return this.analyzeImage(parameters);
+        return this.analyzeImage(parameters as { image_url: string; analysis_type: 'deepfake' | 'phishing' | 'ocr' | 'general' });
 
       case 'analyze_sentiment':
-        return this.analyzeSentiment(parameters);
+        return this.analyzeSentiment(parameters as { text: string });
 
       case 'lookup_indicators':
-        return this.lookupIndicators(parameters);
+        return this.lookupIndicators(parameters as { indicators: string[] });
 
       case 'get_user_profile':
         return this.getUserProfile();
 
       case 'add_to_whitelist':
-        return this.addToWhitelist(parameters);
+        return this.addToWhitelist(parameters as { domain: string });
 
       case 'add_to_blacklist':
-        return this.addToBlacklist(parameters);
+        return this.addToBlacklist(parameters as { domain: string; reason?: string });
 
       case 'sync_threat_intelligence':
-        return this.syncTI(parameters);
+        return this.syncTI(parameters as { force?: boolean });
 
       case 'explain_security_concept':
-        return this.explainConcept(parameters);
+        return this.explainConcept(parameters as { concept: string });
 
       default:
         throw new Error(`Unknown function: ${functionName}`);

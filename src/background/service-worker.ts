@@ -9,7 +9,9 @@
  */
 
 import { orchestrator } from './agents/orchestrator';
+import { enhancedOrchestrator } from './agents/enhanced-orchestrator';
 import { scannerClient } from '@/api/scanner-client';
+import { authClient } from '@/api/auth-client';
 import { secureStorage } from './crypto/encryption';
 
 // ============================================================================
@@ -20,8 +22,17 @@ import { secureStorage } from './crypto/encryption';
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('[Elara AI Agent] Extension installed:', details.reason);
 
-  // Initialize scanner client
+  // Initialize auth client and scanner client
+  await authClient.initialize();
   await scannerClient.initialize();
+
+  // Initialize enhanced orchestrator (with WebLLM)
+  try {
+    await enhancedOrchestrator.initialize();
+  } catch (error) {
+    console.warn('[Elara AI Agent] Enhanced orchestrator initialization failed:', error);
+    console.log('[Elara AI Agent] Falling back to basic orchestrator');
+  }
 
   // Enable side panel
   if (chrome.sidePanel) {
@@ -38,6 +49,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // Initialize on startup
 chrome.runtime.onStartup.addListener(async () => {
   console.log('[Elara AI Agent] Extension started');
+  await authClient.initialize();
   await scannerClient.initialize();
 });
 
@@ -167,7 +179,7 @@ async function handleSetAuthToken(
   sendResponse: (response: unknown) => void
 ) {
   try {
-    scannerClient.setAuthToken(payload.token);
+    // Store auth token in secure storage
     await secureStorage.setItem('authToken', payload.token);
     sendResponse({ success: true });
   } catch (error) {

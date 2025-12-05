@@ -58,17 +58,22 @@ class EdgeClient {
   async initialize(): Promise<void> {
     try {
       // Try to find Elara Edge Engine extension
-      // Extension ID should be constant once published, but for development
-      // we'll try to communicate via window messaging or runtime messaging
+      // The Edge Engine has the extension key in manifest which gives it a stable ID
+      // We can try to communicate with it via chrome.runtime.sendMessage
+
+      // Known Edge Engine extension ID (derived from manifest key)
+      // This ID is consistent across installs due to the "key" field in manifest.json
+      const knownEdgeEngineId = 'jlhplkbgaihoahjglnpmmclheiklgdpb'; // Derived from the public key
 
       // Check if Edge Engine is installed by attempting a ping
-      const available = await this.checkAvailability();
-      this.isAvailable = available;
-
+      const available = await this.checkAvailability(knownEdgeEngineId);
       if (available) {
-        console.log('[EdgeClient] Elara Edge Engine found and available');
+        this.edgeEngineId = knownEdgeEngineId;
+        this.isAvailable = true;
+        console.log('[EdgeClient] Elara Edge Engine found:', knownEdgeEngineId);
       } else {
         console.log('[EdgeClient] Elara Edge Engine not found - will use fallback');
+        this.isAvailable = false;
       }
     } catch (error) {
       console.warn('[EdgeClient] Initialization failed:', error);
@@ -76,10 +81,23 @@ class EdgeClient {
     }
   }
 
-  async checkAvailability(): Promise<boolean> {
-    // For now, Edge Engine is optional - return false
-    // This can be extended when Edge Engine provides an external messaging API
-    return false;
+  async checkAvailability(extensionId: string): Promise<boolean> {
+    if (typeof chrome === 'undefined' || !chrome.runtime) {
+      return false;
+    }
+
+    try {
+      // Try to ping the Edge Engine extension
+      const response = await chrome.runtime.sendMessage(extensionId, {
+        action: 'ping',
+      });
+
+      return response && response.success === true;
+    } catch (error) {
+      // Extension not installed or not responding
+      console.debug('[EdgeClient] Edge Engine ping failed:', error);
+      return false;
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -87,23 +105,24 @@ class EdgeClient {
   // --------------------------------------------------------------------------
 
   async scanURL(url: string): Promise<EdgeScanResult | null> {
-    if (!this.isAvailable) {
+    if (!this.isAvailable || !this.edgeEngineId) {
       console.log('[EdgeClient] Edge Engine not available');
       return null;
     }
 
     try {
-      // Send message to Edge Engine extension
-      // NOTE: This requires Edge Engine to expose an external messaging API
-      // For MVP, we'll return null and rely on cloud API + fallback
+      // Send message to Edge Engine extension for ML inference
+      const response = await chrome.runtime.sendMessage(this.edgeEngineId, {
+        action: 'scan',
+        payload: { url },
+      });
 
-      // Example implementation when Edge Engine supports it:
-      // const response = await chrome.runtime.sendMessage(this.edgeEngineId, {
-      //   action: 'scanURL',
-      //   payload: { url },
-      // });
-      // return response;
+      if (response && response.success && response.result) {
+        console.log('[EdgeClient] Edge scan successful');
+        return response.result;
+      }
 
+      console.warn('[EdgeClient] Edge scan returned invalid response:', response);
       return null;
     } catch (error) {
       console.error('[EdgeClient] Scan failed:', error);

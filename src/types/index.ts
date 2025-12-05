@@ -22,6 +22,10 @@ export interface MessageMetadata {
   threatCard?: ThreatCard;
   processing?: boolean;
   error?: string;
+  functionCalled?: string;
+  functionResult?: any;
+  tokensGenerated?: number;
+  latency?: number;
 }
 
 // ============================================================================

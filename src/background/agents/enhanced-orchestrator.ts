@@ -54,8 +54,14 @@ export class EnhancedOrchestrator {
       });
 
       // Update system health
+      const llmState = webLLMEngine.getState();
+      const llmHealth: 'uninitialized' | 'initializing' | 'ready' | 'error' =
+        llmState === 'ready' ? 'ready' :
+        llmState === 'initializing' || llmState === 'loading-model' ? 'initializing' :
+        llmState === 'error' ? 'error' : 'uninitialized';
+
       debugStore.updateHealth({
-        llmEngine: webLLMEngine.getState(),
+        llmEngine: llmHealth,
         edgeEngine: 'ready',
         cloudAPI: 'healthy',
       });
