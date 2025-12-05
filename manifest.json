@@ -46,7 +46,11 @@
 
   "host_permissions": [
     "https://dev-api.thiefdroppers.com/*",
-    "https://api.thiefdroppers.com/*"
+    "https://api.thiefdroppers.com/*",
+    "https://huggingface.co/*",
+    "https://cdn-lfs.huggingface.co/*",
+    "https://cdn-lfs-us-1.huggingface.co/*",
+    "https://raw.githubusercontent.com/*"
   ],
 
   "web_accessible_resources": [
@@ -57,7 +61,7 @@
   ],
 
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none';"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },
 
   "commands": {

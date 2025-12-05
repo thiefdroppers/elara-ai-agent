@@ -10,9 +10,14 @@
 
 import { orchestrator } from './agents/orchestrator';
 import { enhancedOrchestrator } from './agents/enhanced-orchestrator';
+import { webLLMEngine } from '@/lib/webllm/webllm-engine';
 import { scannerClient } from '@/api/scanner-client';
 import { authClient } from '@/api/auth-client';
 import { secureStorage } from './crypto/encryption';
+
+// Flag to track if enhanced orchestrator (with WebLLM) is ready
+let useEnhancedOrchestrator = false;
+let modelLoadingProgress = 0;
 
 // ============================================================================
 // INITIALIZATION
@@ -27,12 +32,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   await scannerClient.initialize();
 
   // Initialize enhanced orchestrator (with WebLLM)
-  try {
-    await enhancedOrchestrator.initialize();
-  } catch (error) {
-    console.warn('[Elara AI Agent] Enhanced orchestrator initialization failed:', error);
-    console.log('[Elara AI Agent] Falling back to basic orchestrator');
-  }
+  // This loads the LLM model - can take time on first run
+  initializeWebLLM();
 
   // Enable side panel
   if (chrome.sidePanel) {
@@ -51,7 +52,55 @@ chrome.runtime.onStartup.addListener(async () => {
   console.log('[Elara AI Agent] Extension started');
   await authClient.initialize();
   await scannerClient.initialize();
+
+  // Try to reinitialize WebLLM
+  initializeWebLLM();
 });
+
+/**
+ * Initialize WebLLM in the background
+ * This downloads and loads the LLM model for conversational AI
+ */
+async function initializeWebLLM() {
+  try {
+    console.log('[Elara AI Agent] Initializing WebLLM...');
+
+    // Initialize the engine (detects device capabilities)
+    await webLLMEngine.initialize();
+
+    // Load the recommended model with progress tracking
+    await webLLMEngine.loadRecommendedModel((progress) => {
+      modelLoadingProgress = progress;
+      console.log(`[Elara AI Agent] Model loading: ${progress}%`);
+
+      // Broadcast progress to sidepanel
+      chrome.runtime.sendMessage({
+        type: 'MODEL_LOADING_PROGRESS',
+        payload: { progress }
+      }).catch(() => {});
+    });
+
+    // Initialize enhanced orchestrator after model is loaded
+    await enhancedOrchestrator.initialize();
+    useEnhancedOrchestrator = true;
+
+    console.log('[Elara AI Agent] WebLLM ready - using enhanced orchestrator');
+
+    // Notify sidepanel that WebLLM is ready
+    chrome.runtime.sendMessage({
+      type: 'WEBLLM_READY',
+      payload: {
+        model: webLLMEngine.getCurrentModel()?.displayName,
+        capabilities: webLLMEngine.getDeviceCapabilities()
+      }
+    }).catch(() => {});
+
+  } catch (error) {
+    console.warn('[Elara AI Agent] WebLLM initialization failed:', error);
+    console.log('[Elara AI Agent] Using basic orchestrator (no WebLLM)');
+    useEnhancedOrchestrator = false;
+  }
+}
 
 // ============================================================================
 // MESSAGE HANDLERS
@@ -97,6 +146,14 @@ async function handleMessage(
         await handleSecureGet(message.payload as { key: string }, sendResponse);
         break;
 
+      case 'GET_WEBLLM_STATUS':
+        handleGetWebLLMStatus(sendResponse);
+        break;
+
+      case 'LOAD_MODEL':
+        await handleLoadModel(message.payload as { modelId: string }, sendResponse);
+        break;
+
       default:
         sendResponse({ success: false, error: 'Unknown message type' });
     }
@@ -111,29 +168,57 @@ async function handleMessage(
 // ============================================================================
 
 async function handleChatMessage(
-  payload: { content: string },
+  payload: { content: string; stream?: boolean },
   sendResponse: (response: unknown) => void
 ) {
-  const { content } = payload;
+  const { content, stream } = payload;
+
+  // Get the active orchestrator (enhanced with WebLLM if available)
+  const activeOrchestrator = useEnhancedOrchestrator ? enhancedOrchestrator : orchestrator;
 
   // Broadcast state updates to sidepanel
   const stateInterval = setInterval(() => {
-    const state = orchestrator.getState();
+    const state = activeOrchestrator.getState();
     chrome.runtime.sendMessage({ type: 'ORCHESTRATOR_STATE', payload: state }).catch(() => {});
   }, 200);
 
   try {
-    const response = await orchestrator.processMessage(content);
+    let response;
+
+    if (useEnhancedOrchestrator && stream) {
+      // Use streaming with enhanced orchestrator
+      response = await enhancedOrchestrator.processMessage(content, {
+        stream: true,
+        onStream: (chunk) => {
+          // Send streaming chunks to sidepanel
+          chrome.runtime.sendMessage({
+            type: 'STREAM_CHUNK',
+            payload: { chunk }
+          }).catch(() => {});
+        }
+      });
+    } else if (useEnhancedOrchestrator) {
+      // Use enhanced orchestrator without streaming
+      response = await enhancedOrchestrator.processMessage(content);
+    } else {
+      // Fallback to basic orchestrator
+      response = await orchestrator.processMessage(content);
+    }
 
     sendResponse({
       success: true,
       message: {
         id: response.id,
         content: response.content,
-        metadata: response.metadata,
+        metadata: {
+          ...response.metadata,
+          usedWebLLM: useEnhancedOrchestrator,
+          modelName: useEnhancedOrchestrator ? webLLMEngine.getCurrentModel()?.displayName : undefined,
+        },
       },
     });
   } catch (error) {
+    console.error('[Elara AI Agent] Chat message error:', error);
     sendResponse({ success: false, error: String(error) });
   } finally {
     clearInterval(stateInterval);
@@ -214,6 +299,45 @@ async function handleSecureGet(
   try {
     const value = await secureStorage.getItem(payload.key);
     sendResponse({ success: true, data: value });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+function handleGetWebLLMStatus(sendResponse: (response: unknown) => void) {
+  sendResponse({
+    success: true,
+    data: {
+      ready: useEnhancedOrchestrator,
+      engineState: webLLMEngine.getState(),
+      loadingProgress: modelLoadingProgress,
+      currentModel: webLLMEngine.getCurrentModel(),
+      deviceCapabilities: webLLMEngine.getDeviceCapabilities(),
+      compatibleModels: webLLMEngine.getCompatibleModels(),
+    }
+  });
+}
+
+async function handleLoadModel(
+  payload: { modelId: string },
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await webLLMEngine.loadModel(payload.modelId, (progress) => {
+      modelLoadingProgress = progress;
+      chrome.runtime.sendMessage({
+        type: 'MODEL_LOADING_PROGRESS',
+        payload: { progress }
+      }).catch(() => {});
+    });
+
+    useEnhancedOrchestrator = true;
+    sendResponse({
+      success: true,
+      data: {
+        model: webLLMEngine.getCurrentModel()?.displayName,
+      }
+    });
   } catch (error) {
     sendResponse({ success: false, error: String(error) });
   }

@@ -1,13 +1,11 @@
 /**
  * Elara AI Agent - WebLLM Engine
  *
- * Main interface to WebLLM for in-browser LLM inference.
- * Handles model loading, initialization, and inference execution.
- *
- * NOTE: WebLLM is currently a placeholder for MVP implementation.
- * In production, this would integrate with @mlc-ai/web-llm package.
+ * Real WebLLM integration using @mlc-ai/web-llm for in-browser LLM inference.
+ * Provides conversational AI capabilities directly in the browser.
  */
 
+import { CreateMLCEngine, MLCEngine, ChatCompletionMessageParam } from '@mlc-ai/web-llm';
 import type { ChatMessage } from '@/types';
 import {
   AVAILABLE_MODELS,
@@ -73,13 +71,15 @@ export class WebLLMEngine {
   private conversationHistory: ChatMessage[] = [];
   private deviceCapabilities: DeviceCapabilities | null = null;
 
-  // WebLLM engine instance (would be actual WebLLM in production)
-  private engine: any = null;
+  // Real WebLLM engine instance
+  private engine: MLCEngine | null = null;
+  private verbose: boolean;
 
   constructor(config: WebLLMEngineConfig = {}) {
     this.contextManager = new ContextManager();
+    this.verbose = config.verbose ?? false;
 
-    if (config.verbose) {
+    if (this.verbose) {
       console.log('[WebLLMEngine] Initialized with config:', config);
     }
   }
@@ -104,11 +104,8 @@ export class WebLLMEngine {
       this.deviceCapabilities = await detectDeviceCapabilities();
       console.log('[WebLLMEngine] Device capabilities:', this.deviceCapabilities);
 
-      // TODO: Initialize actual WebLLM engine
-      // this.engine = await CreateMLCEngine(modelId, { ...options });
-
       this.setState('ready');
-      console.log('[WebLLMEngine] Initialization complete');
+      console.log('[WebLLMEngine] Initialization complete (ready to load model)');
     } catch (error) {
       console.error('[WebLLMEngine] Initialization failed:', error);
       this.setState('error');
@@ -117,7 +114,7 @@ export class WebLLMEngine {
   }
 
   /**
-   * Load a specific model
+   * Load a specific model using real WebLLM
    */
   async loadModel(modelId: string, onProgress?: (progress: number) => void): Promise<void> {
     const modelConfig = AVAILABLE_MODELS[modelId];
@@ -135,27 +132,24 @@ export class WebLLMEngine {
     this.setState('loading-model');
 
     try {
-      console.log(`[WebLLMEngine] Loading model: ${modelConfig.displayName}`);
+      console.log(`[WebLLMEngine] Loading model: ${modelConfig.displayName} (${modelConfig.modelId})`);
 
-      // TODO: Load actual WebLLM model
-      // await this.engine.reload(modelConfig.modelId, {
-      //   temperature: 0.7,
-      //   top_p: 0.95,
-      // });
-
-      // Simulate progress for MVP
-      if (onProgress) {
-        for (let i = 0; i <= 100; i += 10) {
-          onProgress(i);
-          await new Promise((resolve) => setTimeout(resolve, 200));
-        }
-      }
+      // Create real WebLLM engine with progress callback
+      this.engine = await CreateMLCEngine(modelConfig.modelId, {
+        initProgressCallback: (progress) => {
+          const pct = Math.round(progress.progress * 100);
+          console.log(`[WebLLMEngine] Loading: ${pct}% - ${progress.text}`);
+          if (onProgress) {
+            onProgress(pct);
+          }
+        },
+      });
 
       this.currentModel = modelConfig;
       this.contextManager.setMaxTokens(modelConfig.contextWindow);
       this.setState('ready');
 
-      console.log(`[WebLLMEngine] Model loaded: ${modelConfig.displayName}`);
+      console.log(`[WebLLMEngine] Model loaded successfully: ${modelConfig.displayName}`);
     } catch (error) {
       console.error('[WebLLMEngine] Model loading failed:', error);
       this.setState('error');
@@ -180,7 +174,7 @@ export class WebLLMEngine {
   // --------------------------------------------------------------------------
 
   /**
-   * Generate a response using the LLM
+   * Generate a response using the real WebLLM engine
    */
   async generate(
     messages: ChatMessage[],
@@ -190,8 +184,8 @@ export class WebLLMEngine {
       throw new Error(`Engine not ready. Current state: ${this.state}`);
     }
 
-    if (!this.currentModel) {
-      throw new Error('No model loaded');
+    if (!this.engine) {
+      throw new Error('No model loaded - call loadModel() first');
     }
 
     this.setState('generating');
@@ -208,16 +202,19 @@ export class WebLLMEngine {
       // Get generation config
       const config = this.getGenerationConfig(options);
 
+      // Convert to WebLLM message format
+      const webllmMessages = this.convertToWebLLMFormat(truncatedMessages);
+
       // Generate response
       let content: string;
       let metrics: StreamMetrics;
 
       if (options.stream && options.onStream) {
-        const result = await this.generateStreaming(truncatedMessages, config, options.onStream);
+        const result = await this.generateStreaming(webllmMessages, config, options.onStream);
         content = result.content;
         metrics = result.metrics;
       } else {
-        const result = await this.generateNonStreaming(truncatedMessages, config);
+        const result = await this.generateNonStreaming(webllmMessages, config);
         content = result.content;
         metrics = result.metrics;
       }
@@ -244,10 +241,10 @@ export class WebLLMEngine {
   }
 
   /**
-   * Generate with streaming
+   * Generate with streaming using real WebLLM
    */
   private async generateStreaming(
-    messages: ChatMessage[],
+    messages: ChatCompletionMessageParam[],
     config: GenerationConfig,
     onStream: StreamCallback
   ): Promise<{ content: string; metrics: StreamMetrics }> {
@@ -255,64 +252,61 @@ export class WebLLMEngine {
     handler.onStream(onStream);
     handler.startStream();
 
-    // TODO: Actual WebLLM streaming
-    // const stream = await this.engine.chat.completions.create({
-    //   messages: this.convertToWebLLMFormat(messages),
-    //   stream: true,
-    //   temperature: config.temperature,
-    //   max_tokens: config.maxTokens,
-    //   top_p: config.topP,
-    // });
-    //
-    // for await (const chunk of stream) {
-    //   const delta = chunk.choices[0]?.delta?.content || '';
-    //   if (delta) {
-    //     handler.processChunk(delta);
-    //   }
-    // }
+    try {
+      // Use real WebLLM streaming
+      const stream = await this.engine!.chat.completions.create({
+        messages,
+        stream: true,
+        temperature: config.temperature,
+        max_tokens: config.maxTokens,
+        top_p: config.topP,
+        stop: config.stopSequences,
+      });
 
-    // MVP Simulation: Generate mock response with streaming
-    const mockResponse = this.generateMockResponse(messages);
-    for (let i = 0; i < mockResponse.length; i += 3) {
-      const chunk = mockResponse.slice(i, i + 3);
-      handler.processChunk(chunk);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // Process streaming chunks
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content || '';
+        if (delta) {
+          handler.processChunk(delta);
+        }
+      }
+
+      const metrics = handler.endStream('stop');
+      const content = handler.getFullResponse();
+
+      return { content, metrics };
+    } catch (error) {
+      handler.endStream('error');
+      throw error;
     }
-
-    const metrics = handler.endStream('stop');
-    const content = handler.getFullResponse();
-
-    return { content, metrics };
   }
 
   /**
-   * Generate without streaming
+   * Generate without streaming using real WebLLM
    */
   private async generateNonStreaming(
-    messages: ChatMessage[],
+    messages: ChatCompletionMessageParam[],
     config: GenerationConfig
   ): Promise<{ content: string; metrics: StreamMetrics }> {
     const startTime = performance.now();
 
-    // TODO: Actual WebLLM non-streaming
-    // const response = await this.engine.chat.completions.create({
-    //   messages: this.convertToWebLLMFormat(messages),
-    //   stream: false,
-    //   temperature: config.temperature,
-    //   max_tokens: config.maxTokens,
-    //   top_p: config.topP,
-    // });
-    // const content = response.choices[0].message.content;
+    // Use real WebLLM non-streaming
+    const response = await this.engine!.chat.completions.create({
+      messages,
+      stream: false,
+      temperature: config.temperature,
+      max_tokens: config.maxTokens,
+      top_p: config.topP,
+      stop: config.stopSequences,
+    });
 
-    // MVP Simulation
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    const content = this.generateMockResponse(messages);
+    const content = response.choices[0]?.message?.content || '';
     const endTime = performance.now();
 
     const metrics: StreamMetrics = {
-      firstTokenLatency: 500,
+      firstTokenLatency: endTime - startTime,
       totalLatency: endTime - startTime,
-      tokensGenerated: content.length / 4,
+      tokensGenerated: content.length / 4, // Approximate
       averageTokensPerSecond: (content.length / 4) / ((endTime - startTime) / 1000),
     };
 
@@ -372,6 +366,16 @@ export class WebLLMEngine {
   // --------------------------------------------------------------------------
 
   /**
+   * Convert ChatMessage[] to WebLLM ChatCompletionMessageParam[]
+   */
+  private convertToWebLLMFormat(messages: ChatMessage[]): ChatCompletionMessageParam[] {
+    return messages.map((msg) => ({
+      role: msg.role as 'system' | 'user' | 'assistant',
+      content: msg.content,
+    }));
+  }
+
+  /**
    * Ensure system prompt is included in messages
    */
   private ensureSystemPrompt(messages: ChatMessage[]): ChatMessage[] {
@@ -396,29 +400,6 @@ export class WebLLMEngine {
       maxTokens: options.maxTokens ?? baseConfig.maxTokens,
       stopSequences: options.stopSequences ?? baseConfig.stopSequences,
     };
-  }
-
-  /**
-   * Generate mock response for MVP (will be replaced with actual WebLLM)
-   */
-  private generateMockResponse(messages: ChatMessage[]): string {
-    const lastMessage = messages[messages.length - 1];
-    const content = lastMessage?.content.toLowerCase() || '';
-
-    // Simple keyword-based mock responses
-    if (content.includes('hello') || content.includes('hi')) {
-      return "Hello! I'm Elara, your AI security assistant. I can help you scan URLs, check for threats, and answer security questions. How can I help you today?";
-    }
-
-    if (content.includes('http')) {
-      return "I've analyzed the URL you provided. Based on my ML models, this appears to be a legitimate website with no known threats. However, always exercise caution when entering sensitive information.";
-    }
-
-    if (content.includes('phishing')) {
-      return "Phishing is a type of cyber attack where criminals impersonate legitimate organizations to steal sensitive information like passwords and credit card numbers. Common signs include urgent language, misspelled URLs, and requests for personal information. Always verify the sender before clicking links.";
-    }
-
-    return "I understand you're asking about cybersecurity. Could you provide more details so I can give you a more specific answer? I can help with URL scanning, threat analysis, security concepts, and more.";
   }
 
   /**
@@ -458,6 +439,13 @@ export class WebLLMEngine {
   }
 
   /**
+   * Check if engine is ready for inference
+   */
+  isReady(): boolean {
+    return this.state === 'ready' && this.engine !== null;
+  }
+
+  /**
    * Get current model
    */
   getCurrentModel(): ModelConfig | null {
@@ -469,6 +457,19 @@ export class WebLLMEngine {
    */
   getDeviceCapabilities(): DeviceCapabilities | null {
     return this.deviceCapabilities;
+  }
+
+  /**
+   * Unload current model and free resources
+   */
+  async unload(): Promise<void> {
+    if (this.engine) {
+      await this.engine.unload();
+      this.engine = null;
+    }
+    this.currentModel = null;
+    this.setState('ready');
+    console.log('[WebLLMEngine] Model unloaded');
   }
 
   /**
