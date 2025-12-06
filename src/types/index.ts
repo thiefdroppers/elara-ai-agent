@@ -21,11 +21,27 @@ export interface MessageMetadata {
   scanResult?: ScanResult;
   threatCard?: ThreatCard;
   processing?: boolean;
-  error?: string;
+  error?: string | boolean;
   functionCalled?: string;
   functionResult?: any;
   tokensGenerated?: number;
   latency?: number;
+  // Extended metadata for enhanced orchestrator
+  toolId?: string;
+  executionResult?: any;
+  toonEncoded?: string;
+  zeroLLM?: boolean;
+  result?: any;
+  domain?: string;
+  profile?: any;
+  concept?: string;
+  source?: string;
+  classification?: any;
+  fallback?: boolean;
+  detectedUrl?: string;
+  workflow?: string;
+  results?: any;
+  synthesis?: any;
 }
 
 // ============================================================================
@@ -38,7 +54,18 @@ export type Intent =
   | 'fact_check'
   | 'deepfake'
   | 'explain'
-  | 'general_chat';
+  | 'general_chat'
+  // Extended intents for prompt registry
+  | 'search_ti'
+  | 'bulk_lookup'
+  | 'sync_ti'
+  | 'analyze_image'
+  | 'analyze_sentiment'
+  | 'get_user_profile'
+  | 'add_to_whitelist'
+  | 'add_to_blacklist'
+  | 'help'
+  | 'greeting';
 
 export interface IntentClassification {
   intent: Intent;

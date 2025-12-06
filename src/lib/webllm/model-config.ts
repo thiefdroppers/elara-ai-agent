@@ -25,82 +25,83 @@ export interface ModelConfig {
 
 /**
  * Available WebLLM models for Elara AI Agent
+ * NOTE: Only using q4f32_1 quantization models - these work without shader-f16 support
  * Sorted by size (smallest to largest)
  */
 export const AVAILABLE_MODELS: Record<string, ModelConfig> = {
-  // Gemma 2B - Lightest model for low-end devices
-  'gemma-2-2b-q4': {
-    modelId: 'Gemma-2-2b-it-q4f32_1-MLC',
-    displayName: 'Gemma 2 2B (Fast)',
-    family: 'gemma',
-    size: 1500, // ~1.5GB
-    contextWindow: 4096,
+  // SmolLM2 360M - Tiny model for testing/fallback
+  'smollm2-360m': {
+    modelId: 'SmolLM2-360M-Instruct-q4f32_1-MLC',
+    displayName: 'SmolLM2 360M (Tiny)',
+    family: 'llama',
+    size: 300, // ~300MB
+    contextWindow: 2048,
+    quantization: 'q4f32_1',
+    minRAM: 2,
+    minVRAM: 0, // Runs on CPU
+    avgTokensPerSecond: 150,
+    recommended: false,
+    description: 'Tiny model for testing. Fast but limited capability.',
+  },
+
+  // SmolLM2 1.7B - Small but capable
+  'smollm2-1.7b': {
+    modelId: 'SmolLM2-1.7B-Instruct-q4f32_1-MLC',
+    displayName: 'SmolLM2 1.7B (Fast)',
+    family: 'llama',
+    size: 1000, // ~1GB
+    contextWindow: 2048,
     quantization: 'q4f32_1',
     minRAM: 4,
     minVRAM: 0, // Runs on CPU
-    avgTokensPerSecond: 80,
-    recommended: false,
-    description: 'Lightest model. Best for low-end devices. Good quality, fast inference.',
+    avgTokensPerSecond: 100,
+    recommended: true, // Default - works on most devices
+    description: 'Small but capable. Fast inference, good for security tasks.',
   },
 
-  // Phi-3 Mini - Default recommended model (balanced)
-  'phi-3-mini-q4': {
-    modelId: 'Phi-3-mini-4k-instruct-q4f32_1-MLC',
-    displayName: 'Phi 3 Mini (Recommended)',
+  // Qwen2.5 1.5B - Good balance
+  'qwen2.5-1.5b': {
+    modelId: 'Qwen2.5-1.5B-Instruct-q4f32_1-MLC',
+    displayName: 'Qwen 2.5 1.5B',
+    family: 'qwen',
+    size: 1200, // ~1.2GB
+    contextWindow: 4096,
+    quantization: 'q4f32_1',
+    minRAM: 4,
+    minVRAM: 0,
+    avgTokensPerSecond: 80,
+    recommended: false,
+    description: 'Good balance of size and capability. Multilingual support.',
+  },
+
+  // Phi-3.5 Mini - High quality small model (q4f32 version)
+  'phi-3.5-mini': {
+    modelId: 'Phi-3.5-mini-instruct-q4f32_1-MLC',
+    displayName: 'Phi 3.5 Mini',
     family: 'phi',
-    size: 2300, // ~2.3GB
+    size: 2400, // ~2.4GB
     contextWindow: 4096,
     quantization: 'q4f32_1',
     minRAM: 6,
     minVRAM: 2,
     avgTokensPerSecond: 60,
-    recommended: true,
-    description: 'Default model. Balanced speed and quality. Optimized for security tasks.',
-  },
-
-  // Mistral 7B - High quality alternative
-  'mistral-7b-q4': {
-    modelId: 'Mistral-7B-Instruct-v0.3-q4f16_1-MLC',
-    displayName: 'Mistral 7B (High Quality)',
-    family: 'mistral',
-    size: 4000, // ~4GB
-    contextWindow: 8192,
-    quantization: 'q4f16_1',
-    minRAM: 8,
-    minVRAM: 4,
-    avgTokensPerSecond: 45,
     recommended: false,
-    description: 'High quality model. Excellent reasoning. Requires more resources.',
+    description: 'High quality small model. Good reasoning capability.',
   },
 
-  // Llama 3 8B - Best quality (largest)
-  'llama-3-8b-q4': {
-    modelId: 'Llama-3-8B-Instruct-q4f32_1-MLC',
-    displayName: 'Llama 3 8B (Best Quality)',
+  // Llama 3.2 3B - Balanced quality
+  'llama-3.2-3b': {
+    modelId: 'Llama-3.2-3B-Instruct-q4f32_1-MLC',
+    displayName: 'Llama 3.2 3B',
     family: 'llama',
-    size: 5000, // ~5GB
-    contextWindow: 8192,
+    size: 2000, // ~2GB
+    contextWindow: 4096,
     quantization: 'q4f32_1',
-    minRAM: 12,
-    minVRAM: 6,
-    avgTokensPerSecond: 40,
+    minRAM: 6,
+    minVRAM: 2,
+    avgTokensPerSecond: 50,
     recommended: false,
-    description: 'Best quality model. Ideal for complex security analysis. Requires high-end hardware.',
-  },
-
-  // Qwen 2.5 7B - Alternative high-quality model
-  'qwen-2.5-7b-q4': {
-    modelId: 'Qwen2.5-7B-Instruct-q4f16_1-MLC',
-    displayName: 'Qwen 2.5 7B',
-    family: 'qwen',
-    size: 4200, // ~4.2GB
-    contextWindow: 8192,
-    quantization: 'q4f16_1',
-    minRAM: 8,
-    minVRAM: 4,
-    avgTokensPerSecond: 42,
-    recommended: false,
-    description: 'Qwen 2.5 model. Strong multilingual support and reasoning.',
+    description: 'Balanced model. Good for complex security analysis.',
   },
 };
 
@@ -279,15 +280,31 @@ export async function detectDeviceCapabilities(): Promise<DeviceCapabilities> {
   }
 
   // Recommend model based on capabilities
-  let recommendedModel = 'phi-3-mini-q4'; // Default
+  // Using q4f32_1 models only (no shader-f16 required)
+  // IMPORTANT: Intel HD 530 and similar integrated GPUs have limited VRAM (~1-2GB shared)
+  // Use smaller models by default to avoid GPU device loss errors
+  let recommendedModel = 'smollm2-360m'; // Default - tiny model that works on all devices
 
-  if (totalRAM < 6 || diskSpace < 5) {
-    recommendedModel = 'gemma-2-2b-q4'; // Low-end device
-  } else if (totalRAM >= 12 && hasWebGPU && gpuVRAM && gpuVRAM >= 6) {
-    recommendedModel = 'llama-3-8b-q4'; // High-end device
+  if (totalRAM < 4 || diskSpace < 2) {
+    recommendedModel = 'smollm2-360m'; // Very low-end device
+  } else if (totalRAM >= 16 && hasWebGPU && gpuVRAM && gpuVRAM >= 6) {
+    // Only use larger models on dedicated GPUs with 6GB+ VRAM
+    recommendedModel = 'llama-3.2-3b'; // High-end dedicated GPU
+  } else if (totalRAM >= 12 && hasWebGPU && gpuVRAM && gpuVRAM >= 4) {
+    recommendedModel = 'phi-3.5-mini'; // Mid-high dedicated GPU
   } else if (totalRAM >= 8 && hasWebGPU) {
-    recommendedModel = 'mistral-7b-q4'; // Mid-high device
+    // Integrated GPU (Intel HD, etc.) - use small model
+    recommendedModel = 'smollm2-1.7b';
+  } else if (totalRAM >= 4) {
+    recommendedModel = 'smollm2-1.7b'; // Mid device
   }
+
+  console.log('[ModelConfig] Recommended model:', recommendedModel, {
+    totalRAM,
+    hasWebGPU,
+    gpuVRAM,
+    diskSpace
+  });
 
   return {
     totalRAM,

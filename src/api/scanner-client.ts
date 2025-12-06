@@ -1,11 +1,16 @@
 /**
  * Elara AI Agent - Scanner API Client
  *
- * Wired to Elara Platform at dev-api.thiefdroppers.com
- * Provides hybrid and deep scan capabilities with proper error handling.
+ * ARCHITECTURE:
+ * 1. First tries Edge Engine (local ML) for fast results
+ * 2. Falls back to Backend API if Edge Engine unavailable
+ *
+ * Edge Engine: Local MobileBERT + pirocheto models (<100ms)
+ * Backend API: Scanner V2 full pipeline (1-30s)
  */
 
 import { authClient } from './auth-client';
+import { edgeEngineClient, formatScanResultForChat } from './edge-engine-client';
 import type {
   HybridScanRequest,
   HybridScanResponse,
@@ -58,8 +63,45 @@ class ScannerClient {
   async hybridScan(url: string): Promise<ScanResult> {
     await this.initialize();
 
+    console.log('[ScannerClient] ========================================');
+    console.log('[ScannerClient] HYBRID SCAN - Trying Edge Engine first');
+    console.log('[ScannerClient] URL:', url);
+    console.log('[ScannerClient] ========================================');
+
+    // STEP 1: Try Edge Engine (local ML - fast)
     try {
-      // Use TI lookup endpoint for hybrid scan (edge + TI enrichment)
+      const edgeResult = await edgeEngineClient.quickScan(url);
+
+      if (edgeResult) {
+        console.log('[ScannerClient] EDGE ENGINE SUCCESS:', edgeResult.verdict, `(${edgeResult.riskScore}%)`);
+
+        return {
+          url: edgeResult.url,
+          verdict: edgeResult.verdict as Verdict,
+          riskLevel: edgeResult.riskLevel as RiskLevel,
+          riskScore: edgeResult.riskScore / 100, // Normalize to 0-1
+          confidence: edgeResult.confidence,
+          threatType: edgeResult.verdict === 'DANGEROUS' ? 'phishing' : undefined,
+          indicators: edgeResult.reasoning.map((r, i) => ({
+            type: 'analysis',
+            value: r,
+            severity: edgeResult.riskLevel <= 'B' ? 'low' : edgeResult.riskLevel <= 'D' ? 'medium' : 'high',
+            description: r,
+          })),
+          reasoning: edgeResult.reasoning,
+          scanType: edgeResult.source === 'edge' ? 'edge' : 'hybrid',
+          latency: edgeResult.latency,
+          timestamp: Date.now(),
+        };
+      }
+    } catch (edgeError) {
+      console.warn('[ScannerClient] Edge Engine failed:', edgeError);
+    }
+
+    // STEP 2: Fallback to Backend TI Lookup API
+    console.log('[ScannerClient] Falling back to Backend API: /ti/lookup');
+
+    try {
       const response = await this.fetchWithRetry<any>(
         '/ti/lookup',
         {
@@ -69,12 +111,13 @@ class ScannerClient {
       );
 
       if (response.success && response.data) {
+        console.log('[ScannerClient] BACKEND TI LOOKUP SUCCESS');
         return this.convertTILookupToScanResult(url, response.data);
       }
 
       throw new Error('Invalid TI lookup response');
     } catch (error) {
-      console.warn('[ScannerClient] Hybrid scan failed, using edge fallback:', error);
+      console.warn('[ScannerClient] Backend API also failed, using local fallback:', error);
       return this.performEdgeFallback(url);
     }
   }
@@ -86,15 +129,54 @@ class ScannerClient {
   async deepScan(url: string): Promise<ScanResult> {
     await this.initialize();
 
+    console.log('[ScannerClient] ========================================');
+    console.log('[ScannerClient] DEEP SCAN - Full Scanner V2 Pipeline');
+    console.log('[ScannerClient] URL:', url);
+    console.log('[ScannerClient] ========================================');
+
+    // STEP 1: Try Edge Engine Deep Scan (calls Scanner V2 via cloud-client)
     try {
-      // Use Scanner V2 endpoint for deep scan
+      console.log('[ScannerClient] Trying Edge Engine deepScan...');
+      const edgeResult = await edgeEngineClient.deepScan(url);
+
+      if (edgeResult) {
+        console.log('[ScannerClient] EDGE ENGINE DEEP SCAN SUCCESS:', edgeResult.verdict);
+
+        return {
+          url: edgeResult.url,
+          verdict: edgeResult.verdict as Verdict,
+          riskLevel: edgeResult.riskLevel as RiskLevel,
+          riskScore: edgeResult.riskScore / 100,
+          confidence: edgeResult.confidence,
+          threatType: edgeResult.verdict === 'DANGEROUS' ? 'phishing' : undefined,
+          indicators: edgeResult.reasoning.map((r) => ({
+            type: 'deep_analysis',
+            value: r,
+            severity: edgeResult.riskLevel <= 'B' ? 'low' : edgeResult.riskLevel <= 'D' ? 'medium' : 'critical',
+            description: r,
+          })),
+          reasoning: edgeResult.reasoning,
+          scanType: 'deep',
+          latency: edgeResult.latency,
+          timestamp: Date.now(),
+        };
+      }
+    } catch (edgeError) {
+      console.warn('[ScannerClient] Edge Engine deep scan failed:', edgeError);
+    }
+
+    // STEP 2: Direct Backend Scanner V2 API call
+    console.log('[ScannerClient] Falling back to Backend API: /v2/scan/uri');
+
+    try {
       const response = await this.fetchWithRetry<any>(
-        '/scanner/v2/scan',
+        '/v2/scan/uri',
         {
           method: 'POST',
           body: JSON.stringify({
             url,
             options: {
+              scanMode: 'deep',
               skipScreenshot: false,
               skipTLS: false,
               skipWHOIS: false,
@@ -104,13 +186,36 @@ class ScannerClient {
         }
       );
 
-      if (response.success !== false) {
-        return this.convertScannerV2ToScanResult(url, response);
+      if (response.success && response.data) {
+        console.log('[ScannerClient] BACKEND SCANNER V2 SUCCESS');
+        return this.convertScannerV2ToScanResult(url, response.data);
       }
 
       throw new Error('Scanner V2 scan failed');
     } catch (error) {
-      console.warn('[ScannerClient] Deep scan failed, using edge fallback:', error);
+      console.warn('[ScannerClient] Backend Scanner V2 also failed:', error);
+
+      // STEP 3: Try legacy scanner endpoint
+      try {
+        console.log('[ScannerClient] Trying legacy endpoint: /v2/scanner/deep');
+        const legacyResponse = await this.fetchWithRetry<any>(
+          '/v2/scanner/deep',
+          {
+            method: 'POST',
+            body: JSON.stringify({ url }),
+          }
+        );
+
+        if (legacyResponse.success && legacyResponse.data) {
+          console.log('[ScannerClient] LEGACY SCANNER SUCCESS');
+          return this.convertScannerV2ToScanResult(url, legacyResponse.data);
+        }
+      } catch (legacyError) {
+        console.warn('[ScannerClient] Legacy scanner also failed:', legacyError);
+      }
+
+      // Final fallback: local pattern analysis
+      console.warn('[ScannerClient] All APIs failed, using local pattern analysis');
       return this.performEdgeFallback(url);
     }
   }
@@ -272,6 +377,53 @@ class ScannerClient {
   }
 
   // --------------------------------------------------------------------------
+  // AI Chat (Uses Elara Platform's Gemini AI - fixed endpoint)
+  // --------------------------------------------------------------------------
+
+  async chat(message: string, context?: {
+    systemPrompt?: string;
+    availableTools?: string[];
+    conversationId?: string;
+    toolContext?: string;
+  }): Promise<string> {
+    await this.initialize();
+
+    console.log('[ScannerClient] ========================================');
+    console.log('[ScannerClient] CALLING GEMINI API: /ai/chat');
+    console.log('[ScannerClient] Message:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
+    console.log('[ScannerClient] ========================================');
+
+    try {
+      // Use the fixed /ai/chat endpoint with system prompt
+      const response = await this.fetchWithRetry<any>(
+        '/ai/chat',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            message,
+            systemPrompt: context?.systemPrompt,
+            context: {
+              tools: context?.availableTools,
+              conversationId: context?.conversationId,
+            },
+          }),
+        }
+      );
+
+      if (response.success && response.data) {
+        const result = response.data.response || response.data.message || response.data;
+        console.log('[ScannerClient] GEMINI RESPONSE RECEIVED:', result.substring(0, 100) + (result.length > 100 ? '...' : ''));
+        return result;
+      }
+
+      throw new Error('Invalid chat response');
+    } catch (error) {
+      console.error('[ScannerClient] AI Chat API FAILED:', error);
+      throw error;
+    }
+  }
+
+  // --------------------------------------------------------------------------
   // TI Sync
   // --------------------------------------------------------------------------
 
@@ -288,6 +440,250 @@ class ScannerClient {
     } catch (error) {
       console.warn('[ScannerClient] TI sync failed:', error);
       return { timestamp: Date.now(), updates: [] };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Search Threat Intelligence
+  // --------------------------------------------------------------------------
+
+  async searchThreatIntelligence(indicator: string): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/ti/lookup',
+        {
+          method: 'POST',
+          body: JSON.stringify({ url: indicator }),
+        }
+      );
+
+      if (response.success && response.data) {
+        const data = response.data;
+        return {
+          found: !!(data.blacklist || data.whitelist),
+          indicator,
+          verdict: data.blacklist ? 'DANGEROUS' : data.whitelist ? 'SAFE' : 'UNKNOWN',
+          source: data.blacklist?.source || data.whitelist?.source || 'Elara TI',
+          severity: data.blacklist?.severity || 'low',
+          firstSeen: data.blacklist?.firstSeen || data.whitelist?.firstSeen,
+          blacklistHits: data.blacklistHits || 0,
+          whitelistHits: data.whitelistHits || 0,
+        };
+      }
+
+      return { found: false, indicator };
+    } catch (error) {
+      console.warn('[ScannerClient] TI search failed:', error);
+      return { found: false, indicator, error: String(error) };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Image Analysis (Deepfake Detection)
+  // --------------------------------------------------------------------------
+
+  async analyzeImage(imageUrl: string, analysisType: string): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/ai/analyze-image',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            imageUrl,
+            analysisType,
+          }),
+        }
+      );
+
+      if (response.success && response.data) {
+        return response.data;
+      }
+
+      return { status: 'ANALYSIS_UNAVAILABLE', message: 'Image analysis service not available' };
+    } catch (error) {
+      console.warn('[ScannerClient] Image analysis failed:', error);
+      return { status: 'ERROR', error: String(error) };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Sentiment Analysis (Phishing Email Detection)
+  // --------------------------------------------------------------------------
+
+  async analyzeSentiment(text: string): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/ai/analyze-sentiment',
+        {
+          method: 'POST',
+          body: JSON.stringify({ text }),
+        }
+      );
+
+      if (response.success && response.data) {
+        return response.data;
+      }
+
+      // Fallback: basic analysis
+      return this.performBasicSentimentAnalysis(text);
+    } catch (error) {
+      console.warn('[ScannerClient] Sentiment analysis failed:', error);
+      return this.performBasicSentimentAnalysis(text);
+    }
+  }
+
+  private performBasicSentimentAnalysis(text: string): any {
+    const lowerText = text.toLowerCase();
+    const urgencyWords = ['urgent', 'immediately', 'act now', 'expires', 'suspended', 'verify', 'confirm'];
+    const suspiciousWords = ['password', 'credit card', 'social security', 'bank account', 'wire transfer'];
+    const manipulationWords = ['limited time', 'special offer', 'you won', 'congratulations', 'claim now'];
+
+    const urgencyScore = urgencyWords.filter(w => lowerText.includes(w)).length * 0.15;
+    const suspiciousScore = suspiciousWords.filter(w => lowerText.includes(w)).length * 0.20;
+    const manipulationScore = manipulationWords.filter(w => lowerText.includes(w)).length * 0.15;
+
+    const totalScore = Math.min(1, urgencyScore + suspiciousScore + manipulationScore);
+
+    return {
+      score: totalScore,
+      verdict: totalScore > 0.5 ? 'SUSPICIOUS' : 'CLEAN',
+      indicators: {
+        urgency: urgencyScore > 0,
+        sensitiveRequests: suspiciousScore > 0,
+        manipulation: manipulationScore > 0,
+      },
+      analysis: 'Basic pattern-based analysis',
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // User Profile Management
+  // --------------------------------------------------------------------------
+
+  async getUserProfile(): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/user/profile',
+        { method: 'GET' }
+      );
+
+      if (response.success && response.data) {
+        return response.data;
+      }
+
+      return { email: 'Anonymous', totalScans: 0, whitelist: [], blacklist: [] };
+    } catch (error) {
+      console.warn('[ScannerClient] Get profile failed:', error);
+      return { email: 'Anonymous', totalScans: 0, whitelist: [], blacklist: [] };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Whitelist/Blacklist Management
+  // --------------------------------------------------------------------------
+
+  async addToWhitelist(domain: string): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/user/whitelist',
+        {
+          method: 'POST',
+          body: JSON.stringify({ domain }),
+        }
+      );
+
+      return response.success ? { success: true, domain } : { success: false, error: 'Failed to add' };
+    } catch (error) {
+      console.warn('[ScannerClient] Add to whitelist failed:', error);
+      return { success: false, error: String(error) };
+    }
+  }
+
+  async addToBlacklist(domain: string, reason?: string): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/user/blacklist',
+        {
+          method: 'POST',
+          body: JSON.stringify({ domain, reason }),
+        }
+      );
+
+      return response.success ? { success: true, domain } : { success: false, error: 'Failed to add' };
+    } catch (error) {
+      console.warn('[ScannerClient] Add to blacklist failed:', error);
+      return { success: false, error: String(error) };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Sync Threat Intelligence
+  // --------------------------------------------------------------------------
+
+  async syncThreatIntelligence(force?: boolean): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/ti/sync',
+        {
+          method: 'POST',
+          body: JSON.stringify({ force: force || false }),
+        }
+      );
+
+      if (response.success && response.data) {
+        return {
+          success: true,
+          message: response.data.message || 'Sync completed',
+          newIndicators: response.data.newIndicators || 0,
+          lastSync: response.data.lastSync || Date.now(),
+        };
+      }
+
+      return { success: true, message: 'Sync completed', newIndicators: 0 };
+    } catch (error) {
+      console.warn('[ScannerClient] TI sync failed:', error);
+      return { success: false, error: String(error) };
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Web Search
+  // --------------------------------------------------------------------------
+
+  async webSearch(query: string): Promise<any> {
+    await this.initialize();
+
+    try {
+      const response = await this.fetchWithRetry<any>(
+        '/ai/search',
+        {
+          method: 'POST',
+          body: JSON.stringify({ query }),
+        }
+      );
+
+      if (response.success && response.data) {
+        return response.data;
+      }
+
+      return { results: [], message: 'Web search not available' };
+    } catch (error) {
+      console.warn('[ScannerClient] Web search failed:', error);
+      return { results: [], error: String(error) };
     }
   }
 

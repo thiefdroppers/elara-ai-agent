@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Elara AI Agent",
-  "version": "1.0.0",
-  "description": "Ask Elara - Your AI-powered cybersecurity guardian. Real-time phishing detection, deepfake analysis, and fact-checking.",
+  "version": "2.0.0",
+  "description": "Ask Elara - Your AI-powered cybersecurity guardian with enterprise-grade tool orchestration. Real-time phishing detection, deepfake analysis, and fact-checking.",
 
   "icons": {
     "16": "icons/icon16.png",

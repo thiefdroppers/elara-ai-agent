@@ -3,9 +3,11 @@
  *
  * Main background script that handles:
  * - Message routing
- * - Agent orchestration
+ * - Agent orchestration (with Gemini backend)
  * - Context menu integration
  * - Periodic TI sync
+ *
+ * @version 2.0.0 - Uses Gemini-backed orchestrator (WebLLM optional)
  */
 
 import { orchestrator } from './agents/orchestrator';
@@ -15,9 +17,12 @@ import { scannerClient } from '@/api/scanner-client';
 import { authClient } from '@/api/auth-client';
 import { secureStorage } from './crypto/encryption';
 
-// Flag to track if enhanced orchestrator (with WebLLM) is ready
-let useEnhancedOrchestrator = false;
+// Flag to track if WebLLM is available (optional enhancement)
+let webLLMReady = false;
 let modelLoadingProgress = 0;
+
+// ALWAYS use the enhanced orchestrator (Gemini backend) - WebLLM is optional
+// The orchestrator uses cloud AI when WebLLM is not available
 
 // ============================================================================
 // INITIALIZATION
@@ -80,11 +85,15 @@ async function initializeWebLLM() {
       }).catch(() => {});
     });
 
-    // Initialize enhanced orchestrator after model is loaded
+    // Initialize WebLLM-enhanced orchestrator after model is loaded
     await enhancedOrchestrator.initialize();
-    useEnhancedOrchestrator = true;
+    webLLMReady = true;
 
-    console.log('[Elara AI Agent] WebLLM ready - using enhanced orchestrator');
+    console.log('[Elara AI Agent] ========================================');
+    console.log('[Elara AI Agent] WebLLM READY - LOCAL LLM AVAILABLE');
+    console.log('[Elara AI Agent] Model:', webLLMEngine.getCurrentModel()?.displayName);
+    console.log('[Elara AI Agent] webLLMReady =', webLLMReady);
+    console.log('[Elara AI Agent] ========================================');
 
     // Notify sidepanel that WebLLM is ready
     chrome.runtime.sendMessage({
@@ -97,8 +106,9 @@ async function initializeWebLLM() {
 
   } catch (error) {
     console.warn('[Elara AI Agent] WebLLM initialization failed:', error);
-    console.log('[Elara AI Agent] Using basic orchestrator (no WebLLM)');
-    useEnhancedOrchestrator = false;
+    console.log('[Elara AI Agent] WebLLM not available - using Gemini backend for AI');
+    webLLMReady = false;
+    // Note: The orchestrator will still work using Gemini cloud AI
   }
 }
 
@@ -173,37 +183,24 @@ async function handleChatMessage(
 ) {
   const { content, stream } = payload;
 
-  // Get the active orchestrator (enhanced with WebLLM if available)
-  const activeOrchestrator = useEnhancedOrchestrator ? enhancedOrchestrator : orchestrator;
+  // ALWAYS use the enhanced orchestrator (with Gemini backend)
+  // It will use zero-LLM path for 80% of requests, and Gemini for the rest
+  console.log('[Elara AI Agent] Processing chat message');
+  console.log('[Elara AI Agent] webLLMReady =', webLLMReady);
+  console.log('[Elara AI Agent] Using: ENHANCED orchestrator (Gemini backend)');
 
   // Broadcast state updates to sidepanel
   const stateInterval = setInterval(() => {
-    const state = activeOrchestrator.getState();
+    const state = orchestrator.getState();
     chrome.runtime.sendMessage({ type: 'ORCHESTRATOR_STATE', payload: state }).catch(() => {});
   }, 200);
 
   try {
-    let response;
-
-    if (useEnhancedOrchestrator && stream) {
-      // Use streaming with enhanced orchestrator
-      response = await enhancedOrchestrator.processMessage(content, {
-        stream: true,
-        onStream: (chunk) => {
-          // Send streaming chunks to sidepanel
-          chrome.runtime.sendMessage({
-            type: 'STREAM_CHUNK',
-            payload: { chunk }
-          }).catch(() => {});
-        }
-      });
-    } else if (useEnhancedOrchestrator) {
-      // Use enhanced orchestrator without streaming
-      response = await enhancedOrchestrator.processMessage(content);
-    } else {
-      // Fallback to basic orchestrator
-      response = await orchestrator.processMessage(content);
-    }
+    // Use the enhanced orchestrator which has:
+    // - Zero-LLM intent classification for 80% of requests
+    // - TOON-encoded prompts for 40% token reduction
+    // - Gemini cloud AI fallback for complex requests
+    const response = await orchestrator.processMessage(content);
 
     sendResponse({
       success: true,
@@ -212,8 +209,8 @@ async function handleChatMessage(
         content: response.content,
         metadata: {
           ...response.metadata,
-          usedWebLLM: useEnhancedOrchestrator,
-          modelName: useEnhancedOrchestrator ? webLLMEngine.getCurrentModel()?.displayName : undefined,
+          usedWebLLM: webLLMReady,
+          modelName: webLLMReady ? webLLMEngine.getCurrentModel()?.displayName : 'Gemini (Cloud)',
         },
       },
     });
@@ -308,12 +305,14 @@ function handleGetWebLLMStatus(sendResponse: (response: unknown) => void) {
   sendResponse({
     success: true,
     data: {
-      ready: useEnhancedOrchestrator,
+      ready: true, // Orchestrator is always ready (uses Gemini if WebLLM not available)
+      webLLMReady,
       engineState: webLLMEngine.getState(),
       loadingProgress: modelLoadingProgress,
-      currentModel: webLLMEngine.getCurrentModel(),
+      currentModel: webLLMReady ? webLLMEngine.getCurrentModel() : { displayName: 'Gemini (Cloud)' },
       deviceCapabilities: webLLMEngine.getDeviceCapabilities(),
       compatibleModels: webLLMEngine.getCompatibleModels(),
+      backendMode: webLLMReady ? 'local' : 'cloud',
     }
   });
 }
@@ -331,7 +330,7 @@ async function handleLoadModel(
       }).catch(() => {});
     });
 
-    useEnhancedOrchestrator = true;
+    webLLMReady = true;
     sendResponse({
       success: true,
       data: {

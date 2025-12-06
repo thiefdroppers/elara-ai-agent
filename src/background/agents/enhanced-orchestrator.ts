@@ -44,21 +44,15 @@ export class EnhancedOrchestrator {
     logger.info('Initializing Enhanced Orchestrator');
 
     try {
-      // Initialize WebLLM engine
-      await webLLMEngine.initialize();
+      // Check if WebLLM is already ready (loaded by service worker)
+      const llmState = webLLMEngine.getState();
 
-      // Load recommended model
-      await webLLMEngine.loadRecommendedModel((progress) => {
-        logger.debug('Model loading progress', { progress });
-        debugStore.addLLMInfo({ loadingProgress: progress });
-      });
+      if (llmState !== 'ready' || !webLLMEngine.isReady()) {
+        throw new Error('WebLLM not ready - model must be loaded first');
+      }
 
       // Update system health
-      const llmState = webLLMEngine.getState();
-      const llmHealth: 'uninitialized' | 'initializing' | 'ready' | 'error' =
-        llmState === 'ready' ? 'ready' :
-        llmState === 'initializing' || llmState === 'loading-model' ? 'initializing' :
-        llmState === 'error' ? 'error' : 'uninitialized';
+      const llmHealth: 'uninitialized' | 'initializing' | 'ready' | 'error' = 'ready';
 
       debugStore.updateHealth({
         llmEngine: llmHealth,
@@ -67,6 +61,7 @@ export class EnhancedOrchestrator {
       });
 
       logger.info('Enhanced Orchestrator initialized successfully');
+      logger.info(`Using model: ${webLLMEngine.getCurrentModel()?.displayName}`);
     } catch (error) {
       logger.error('Initialization failed', error as Error);
       debugStore.updateHealth({ llmEngine: 'error' });

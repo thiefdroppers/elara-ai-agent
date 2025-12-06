@@ -1,8 +1,15 @@
 /**
  * Elara AI Agent - Authentication Client
  *
- * Handles CSRF + session-based authentication with the Elara Platform API.
- * Based on working Python implementation in test_ti_lookup.py
+ * IMPORTANT: This client reads auth tokens from Edge Engine's storage first.
+ * If Edge Engine is logged in, AI Agent uses the same token.
+ * This avoids duplicate authentication and ensures both extensions share auth.
+ *
+ * Edge Engine storage keys:
+ * - auth_accessToken
+ * - auth_refreshToken
+ * - auth_expiresAt
+ * - auth_user
  */
 
 // ============================================================================
@@ -34,7 +41,15 @@ interface AuthCredentials {
 
 const API_BASE_URL = 'https://dev-api.thiefdroppers.com';
 
-// Default admin credentials (as per CLAUDE.md)
+// Edge Engine storage keys (shared auth)
+const EDGE_ENGINE_STORAGE_KEYS = {
+  accessToken: 'auth_accessToken',
+  refreshToken: 'auth_refreshToken',
+  expiresAt: 'auth_expiresAt',
+  user: 'auth_user',
+};
+
+// Fallback credentials for extension login endpoint
 const DEFAULT_CREDENTIALS: AuthCredentials = {
   email: 'admin@oelara.com',
   password: 'ElaraAdmin2025!',
@@ -59,8 +74,33 @@ class AuthClient {
     if (this.isInitialized) return;
 
     try {
-      // Try to load stored tokens
       if (typeof chrome !== 'undefined' && chrome.storage) {
+        // FIRST: Try to get token from Edge Engine storage (shared auth)
+        const edgeResult = await chrome.storage.local.get([
+          EDGE_ENGINE_STORAGE_KEYS.accessToken,
+          EDGE_ENGINE_STORAGE_KEYS.refreshToken,
+          EDGE_ENGINE_STORAGE_KEYS.expiresAt,
+          EDGE_ENGINE_STORAGE_KEYS.user,
+        ]);
+
+        if (edgeResult[EDGE_ENGINE_STORAGE_KEYS.accessToken]) {
+          this.accessToken = edgeResult[EDGE_ENGINE_STORAGE_KEYS.accessToken];
+          this.tokenExpiry = parseInt(edgeResult[EDGE_ENGINE_STORAGE_KEYS.expiresAt]) || 0;
+
+          console.log('[AuthClient] Using token from Edge Engine storage');
+
+          // Check if token is expired
+          if (!this.isTokenExpired()) {
+            console.log('[AuthClient] Edge Engine token is valid');
+            this.isInitialized = true;
+            return;
+          } else {
+            console.log('[AuthClient] Edge Engine token expired');
+            this.accessToken = null;
+          }
+        }
+
+        // FALLBACK: Try AI Agent's own storage
         const result = await chrome.storage.local.get([
           'elara_access_token',
           'elara_csrf_token',
@@ -74,7 +114,7 @@ class AuthClient {
           this.sessionCookie = result.elara_session_cookie || null;
           this.tokenExpiry = result.elara_token_expiry || 0;
 
-          console.log('[AuthClient] Restored tokens from storage');
+          console.log('[AuthClient] Restored tokens from AI Agent storage');
 
           // Check if token is expired
           if (this.isTokenExpired()) {
@@ -186,27 +226,91 @@ class AuthClient {
   async ensureValidToken(): Promise<string | null> {
     await this.initialize();
 
-    // If no token, try to login with default credentials
-    if (!this.accessToken) {
-      console.log('[AuthClient] No token found, attempting auto-login...');
-      const result = await this.login();
-      if (!result.success) {
-        console.error('[AuthClient] Auto-login failed:', result.error);
-        return null;
+    // If we have a valid token, return it
+    if (this.accessToken && !this.isTokenExpired(300)) {
+      return this.accessToken;
+    }
+
+    // Try to refresh from Edge Engine storage (user might have logged in there)
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      const edgeResult = await chrome.storage.local.get([
+        EDGE_ENGINE_STORAGE_KEYS.accessToken,
+        EDGE_ENGINE_STORAGE_KEYS.expiresAt,
+      ]);
+
+      if (edgeResult[EDGE_ENGINE_STORAGE_KEYS.accessToken]) {
+        const expiresAt = parseInt(edgeResult[EDGE_ENGINE_STORAGE_KEYS.expiresAt]) || 0;
+        if (Date.now() < expiresAt) {
+          this.accessToken = edgeResult[EDGE_ENGINE_STORAGE_KEYS.accessToken];
+          this.tokenExpiry = expiresAt;
+          console.log('[AuthClient] Got fresh token from Edge Engine storage');
+          return this.accessToken;
+        }
       }
     }
 
-    // If token is expired or about to expire (< 5 minutes), re-authenticate
-    if (this.isTokenExpired(300)) {
-      console.log('[AuthClient] Token expired or expiring soon, re-authenticating...');
-      const result = await this.login();
+    // No valid token from Edge Engine - try extension login endpoint
+    if (!this.accessToken) {
+      console.log('[AuthClient] No token found, attempting extension login...');
+      const result = await this.extensionLogin();
       if (!result.success) {
-        console.error('[AuthClient] Re-authentication failed:', result.error);
+        console.error('[AuthClient] Extension login failed:', result.error);
         return null;
       }
     }
 
     return this.accessToken;
+  }
+
+  /**
+   * Login using the extension-specific endpoint (no CSRF required)
+   */
+  private async extensionLogin(): Promise<{ success: boolean; error?: string }> {
+    try {
+      console.log('[AuthClient] Using extension login endpoint...');
+
+      const response = await fetch(`${API_BASE_URL}/api/v2/auth/extension/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: DEFAULT_CREDENTIALS.email,
+          password: DEFAULT_CREDENTIALS.password,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[AuthClient] Extension login failed:', response.status, errorText);
+        return { success: false, error: `Login failed: ${response.status}` };
+      }
+
+      const data = await response.json();
+
+      if (!data.accessToken) {
+        return { success: false, error: 'No access token in response' };
+      }
+
+      // Calculate expiry (default 30 min if not provided)
+      const expiresIn = data.expiresIn || 1800; // seconds
+      this.accessToken = data.accessToken;
+      this.tokenExpiry = Date.now() + expiresIn * 1000;
+
+      // Store in AI Agent storage
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        await chrome.storage.local.set({
+          elara_access_token: this.accessToken,
+          elara_token_expiry: this.tokenExpiry,
+        });
+      }
+
+      console.log('[AuthClient] Extension login successful');
+      return { success: true };
+    } catch (error) {
+      console.error('[AuthClient] Extension login error:', error);
+      return { success: false, error: String(error) };
+    }
   }
 
   // --------------------------------------------------------------------------

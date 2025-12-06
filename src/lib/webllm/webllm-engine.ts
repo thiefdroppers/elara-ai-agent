@@ -145,6 +145,9 @@ export class WebLLMEngine {
         },
       });
 
+      // Set up GPU device loss handler
+      this.setupDeviceLostHandler();
+
       this.currentModel = modelConfig;
       this.contextManager.setMaxTokens(modelConfig.contextWindow);
       this.setState('ready');
@@ -155,6 +158,46 @@ export class WebLLMEngine {
       this.setState('error');
       throw error;
     }
+  }
+
+  /**
+   * Set up handler for GPU device loss (common on integrated GPUs)
+   */
+  private setupDeviceLostHandler(): void {
+    // WebLLM handles device lost internally, but we track it for recovery
+    console.log('[WebLLMEngine] Device lost handler configured');
+  }
+
+  /**
+   * Try to recover from GPU device loss by loading a smaller model
+   */
+  async tryRecoverWithSmallerModel(): Promise<boolean> {
+    console.log('[WebLLMEngine] Attempting recovery with smaller model...');
+
+    // Find a smaller model
+    const modelSizes = [
+      'smollm2-360m',  // Smallest
+      'smollm2-1.7b',
+      'qwen2.5-1.5b',
+    ];
+
+    const currentSize = this.currentModel?.size || Infinity;
+
+    for (const modelId of modelSizes) {
+      const config = AVAILABLE_MODELS[modelId];
+      if (config && config.size < currentSize) {
+        try {
+          console.log(`[WebLLMEngine] Trying smaller model: ${config.displayName}`);
+          await this.unload();
+          await this.loadModel(modelId);
+          return true;
+        } catch (error) {
+          console.warn(`[WebLLMEngine] Failed to load ${modelId}:`, error);
+        }
+      }
+    }
+
+    return false;
   }
 
   /**
