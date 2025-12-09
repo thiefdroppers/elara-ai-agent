@@ -25,6 +25,32 @@ const postBuild = () => ({
         writeFileSync(destSidepanel, html);
       }
 
+      // Process popup HTML
+      const srcPopup = resolve(srcDir, 'popup', 'index.html');
+      const destPopupDir = resolve(distDir, 'popup');
+      const destPopup = resolve(destPopupDir, 'index.html');
+      if (!existsSync(destPopupDir)) {
+        mkdirSync(destPopupDir, { recursive: true });
+      }
+      if (existsSync(srcPopup)) {
+        let html = readFileSync(srcPopup, 'utf-8');
+        html = html.replace(/\.\.\/\.\.\/popup\//g, './');
+        html = html.replace(/\.\.\/\.\.\/assets\//g, '../assets/');
+        html = html.replace(/\.\.\/\.\.\/chunks\//g, '../chunks/');
+        writeFileSync(destPopup, html);
+      }
+
+      // Process popup options HTML
+      const srcOptions = resolve(srcDir, 'popup', 'options.html');
+      const destOptions = resolve(destPopupDir, 'options.html');
+      if (existsSync(srcOptions)) {
+        let html = readFileSync(srcOptions, 'utf-8');
+        html = html.replace(/\.\.\/\.\.\/popup\//g, './');
+        html = html.replace(/\.\.\/\.\.\/assets\//g, '../assets/');
+        html = html.replace(/\.\.\/\.\.\/chunks\//g, '../chunks/');
+        writeFileSync(destOptions, html);
+      }
+
       // Remove src directory
       rmSync(srcDir, { recursive: true, force: true });
     }
@@ -78,6 +104,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         sidepanel: resolve(__dirname, 'src/sidepanel/index.html'),
+        popup: resolve(__dirname, 'src/popup/index.html'),
+        options: resolve(__dirname, 'src/popup/options.html'),
         'service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
         'content-script': resolve(__dirname, 'src/content/content-script.ts'),
       },
@@ -91,6 +119,12 @@ export default defineConfig({
           }
           if (chunkInfo.name === 'sidepanel') {
             return 'sidepanel/sidepanel.js';
+          }
+          if (chunkInfo.name === 'popup') {
+            return 'popup/popup.js';
+          }
+          if (chunkInfo.name === 'options') {
+            return 'popup/options.js';
           }
           return '[name]/[name].js';
         },

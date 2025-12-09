@@ -39,10 +39,23 @@ global.chrome = {
 } as any;
 
 // Mock crypto.randomUUID for tests
-global.crypto = {
-  ...global.crypto,
-  randomUUID: () => Math.random().toString(36).substring(2, 15),
-} as any;
+// Note: In jsdom, crypto is read-only, so we use Object.defineProperty
+if (typeof global.crypto?.randomUUID !== 'function') {
+  Object.defineProperty(global, 'crypto', {
+    value: {
+      ...global.crypto,
+      randomUUID: () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
+      getRandomValues: (arr: Uint8Array) => {
+        for (let i = 0; i < arr.length; i++) {
+          arr[i] = Math.floor(Math.random() * 256);
+        }
+        return arr;
+      },
+    },
+    writable: true,
+    configurable: true,
+  });
+}
 
 // Mock performance.now() for consistent test results
 global.performance = {

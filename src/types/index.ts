@@ -1,131 +1,43 @@
 /**
- * Elara AI Agent - Type Definitions
+ * Elara Edge Engine - Type Definitions
  */
-
-// ============================================================================
-// CHAT TYPES
-// ============================================================================
-
-export type MessageRole = 'user' | 'assistant' | 'system';
-
-export interface ChatMessage {
-  id: string;
-  role: MessageRole;
-  content: string;
-  timestamp: number;
-  metadata?: MessageMetadata;
-}
-
-export interface MessageMetadata {
-  intent?: Intent;
-  scanResult?: ScanResult;
-  threatCard?: ThreatCard;
-  processing?: boolean;
-  error?: string | boolean;
-  functionCalled?: string;
-  functionResult?: any;
-  tokensGenerated?: number;
-  latency?: number;
-  // Extended metadata for enhanced orchestrator
-  toolId?: string;
-  executionResult?: any;
-  toonEncoded?: string;
-  zeroLLM?: boolean;
-  result?: any;
-  domain?: string;
-  profile?: any;
-  concept?: string;
-  source?: string;
-  classification?: any;
-  fallback?: boolean;
-  detectedUrl?: string;
-  workflow?: string;
-  results?: any;
-  synthesis?: any;
-}
-
-// ============================================================================
-// INTENT TYPES
-// ============================================================================
-
-export type Intent =
-  | 'scan_url'
-  | 'deep_scan'
-  | 'fact_check'
-  | 'deepfake'
-  | 'explain'
-  | 'general_chat'
-  // Extended intents for prompt registry
-  | 'search_ti'
-  | 'bulk_lookup'
-  | 'sync_ti'
-  | 'analyze_image'
-  | 'analyze_sentiment'
-  | 'get_user_profile'
-  | 'add_to_whitelist'
-  | 'add_to_blacklist'
-  | 'help'
-  | 'greeting';
-
-export interface IntentClassification {
-  intent: Intent;
-  confidence: number;
-  entities: Record<string, string>;
-  requiredFamilies?: string[];
-}
 
 // ============================================================================
 // SCAN TYPES
 // ============================================================================
 
-export type Verdict = 'SAFE' | 'SUSPICIOUS' | 'DANGEROUS' | 'UNKNOWN';
+export type ScanMode = 'edge' | 'hybrid' | 'deep';
 export type RiskLevel = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+export type Verdict = 'SAFE' | 'SUSPICIOUS' | 'DANGEROUS' | 'UNKNOWN';
 export type Decision = 'ALLOW' | 'WARN' | 'BLOCK';
+
+export interface ScanContext {
+  tabId?: number;
+  frameId?: number;
+  triggeredBy: 'navigation' | 'manual' | 'api' | 'content-script';
+  privacyMode?: 'normal' | 'strict';
+  timestamp?: number;
+}
 
 export interface ScanResult {
   url: string;
   verdict: Verdict;
+  riskScore: number;          // 0-100
   riskLevel: RiskLevel;
-  riskScore: number;
-  confidence: number;
-  threatType?: string;
-  indicators: ThreatIndicator[];
+  confidence: number;         // 0-1
+  confidenceInterval: [number, number];
+  decision: Decision;
   reasoning: string[];
-  tiMatch?: TICacheHit;
-  scanType: 'edge' | 'hybrid' | 'deep';
-  latency: number;
-  timestamp: number;
-}
-
-export interface ThreatIndicator {
-  type: string;
-  value: string;
-  severity: 'low' | 'medium' | 'high' | 'critical';
-  description: string;
-}
-
-export interface ThreatCard {
-  verdict: Verdict;
-  riskLevel: RiskLevel;
-  riskScore: number;
-  threatType?: string;
-  indicators: ThreatIndicator[];
-  recommendation: string;
+  models: ModelPredictions;
+  source: ScanMode;
+  latency: number;            // ms
+  timestamp: string;
+  cached?: boolean;
 }
 
 // ============================================================================
 // FEATURE TYPES
 // ============================================================================
-
-export interface URLFeatures {
-  url: string;
-  lexical: LexicalFeatures;
-  dom?: DOMFeatures;
-  network?: NetworkFeatures;
-  tiHit?: TICacheHit;
-  extractionTier: 1 | 2 | 3;
-  extractionLatency: number;
-}
 
 export interface LexicalFeatures {
   url: string;
@@ -167,147 +79,405 @@ export interface NetworkFeatures {
   redirectCount: number;
   finalUrl: string;
   tlsValid: boolean;
+  tlsVersion?: string;
+  certificateIssuer?: string;
+  certificateAge?: number;
   mixedContent: boolean;
   responseTime: number;
   statusCode: number;
-  certificateAge?: number;
 }
-
-// ============================================================================
-// TI CACHE TYPES
-// ============================================================================
 
 export interface TICacheHit {
   isBlacklisted: boolean;
   isWhitelisted: boolean;
   source: string;
-  severity?: string;
-  confidence?: number;
-  lastUpdated?: number;
+  lastSeen: Date;
+  confidence: number;
+  severity?: string; // HIGH, MEDIUM, LOW for blacklisted entries
+}
+
+export interface URLFeatures {
+  url: string;
+  lexical: LexicalFeatures;
+  dom?: DOMFeatures;
+  network?: NetworkFeatures;
+  tiHit?: TICacheHit;
+  extractionTier: 1 | 2 | 3;
+  extractionLatency: number;
 }
 
 // ============================================================================
-// ML TYPES
+// MODEL TYPES
 // ============================================================================
+
+export interface ModelPrediction {
+  probability: number;    // 0-1 (phishing probability)
+  confidence: number;     // 0-1 (prediction confidence)
+  latency: number;        // ms
+}
+
+export interface ModelPredictions {
+  // Primary models (MobileBERT + pirocheto ensemble)
+  mobilebert?: ModelPrediction;
+  pirocheto?: ModelPrediction;
+  // Legacy models (XGBoost/LightGBM - DEPRECATED, DO NOT USE)
+  xgboost?: ModelPrediction;
+  lightgbm?: ModelPrediction;
+  // Other legacy models (not currently used)
+  distilbert?: ModelPrediction;
+  lexical?: ModelPrediction;
+  tfidf?: ModelPrediction;
+}
 
 export interface EdgePrediction {
   probability: number;
   confidence: number;
+  severity?: string; // HIGH, MEDIUM, LOW for blacklisted entries
   models: ModelPredictions;
   reasoning: string[];
   latency: number;
 }
 
-export interface ModelPredictions {
-  mobilebert?: ModelPrediction;
-  pirocheto?: ModelPrediction;
-  lexical?: ModelPrediction;
-  xgboost?: ModelPrediction;
-  lightgbm?: ModelPrediction;
-}
-
-export interface ModelPrediction {
-  probability: number;
-  confidence: number;
-  latency: number;
-}
-
 export interface EnsembleWeights {
-  mobilebert: number;
-  pirocheto: number;
+  // Primary models (MobileBERT + pirocheto ensemble)
+  mobilebert?: number;
+  pirocheto?: number;
+  // Legacy weights (XGBoost/LightGBM - DEPRECATED, DO NOT USE)
   xgboost?: number;
   lightgbm?: number;
+  // Other legacy weights
+  distilbert?: number;
+  lexical?: number;
+  tfidf?: number;
 }
 
 // ============================================================================
-// AGENT TYPES
+// ROUTING TYPES
 // ============================================================================
 
-export type AgentState = 'idle' | 'planning' | 'executing' | 'validating' | 'complete' | 'error';
-
-export interface OrchestratorState {
-  state: AgentState;
-  currentTask?: string;
-  progress: number;
-  error?: string;
+export interface RoutingDecision {
+  mode: ScanMode;
+  reason: string;
+  shouldCache: boolean;
+  priority: 'low' | 'medium' | 'high';
 }
 
-export interface AgentAction {
-  type: string;
-  payload: unknown;
-  agentId: string;
-  timestamp: number;
+export interface ConfidenceThresholds {
+  high: number;     // Edge-only threshold
+  medium: number;   // Hybrid threshold
 }
 
 // ============================================================================
-// API TYPES
+// CLOUD API TYPES
 // ============================================================================
 
-export interface HybridScanRequest {
+export interface HybridRequest {
   url: string;
-  features?: Partial<URLFeatures>;
-  options?: {
-    includeWhois?: boolean;
-    includeScreenshot?: boolean;
-    maxRedirects?: number;
+  edgePrediction: EdgePrediction;
+  features: URLFeatures;
+}
+
+export interface HybridResponse {
+  edge: EdgePrediction;
+  cloud: {
+    tiData: TIData;
+    externalAPIs?: ExternalAPIResults;
+    cloudModels?: ModelPredictions;
+  };
+  fused: FusedPrediction;
+}
+
+export interface TIData {
+  blacklistHits: number;
+  whitelistHits: number;
+  sources: string[];
+  domainAge?: number;
+  registrar?: string;
+}
+
+export interface ExternalAPIResults {
+  virustotal?: {
+    positives: number;
+    total: number;
+    scanDate: string;
+  };
+  googleSafeBrowsing?: {
+    matches: string[];
+    threatTypes: string[];
   };
 }
 
-export interface HybridScanResponse {
-  requestId: string;
-  timestamp: number;
-  result: ScanResult;
-  processingTimeMs: number;
+export interface FusedPrediction {
+  probability: number;
+  confidence: number;
+  severity?: string; // HIGH, MEDIUM, LOW for blacklisted entries
+  riskLevel: RiskLevel;
+  decision: Decision;
+  reasoning: string[];
+  latency: {
+    edge: number;
+    cloud: number;
+    total: number;
+  };
 }
 
-export interface DeepScanRequest {
+export interface DeepScanResult {
   url: string;
-  depth?: 'standard' | 'comprehensive';
+  verdict: Verdict;
+  riskScore: number;
+  riskLevel: RiskLevel;
+  confidence: number;
+  severity?: string; // HIGH, MEDIUM, LOW for blacklisted entries
+  confidenceInterval: [number, number];
+  decision: Decision;
+  reasoning: string[];
+  models: Record<string, { probability: number; confidence: number; latency: number }>;
+  source: ScanMode;
+  latency: number;
+  timestamp: string;
+
+  // Scanner V2 Extended Data (optional - populated on deep scan)
+  scannerV2Data?: ScannerV2Data;
+
+  // Legacy fields (deprecated)
+  evidence?: Evidence;
+  tiMatches?: TIMatch[];
+  summary?: string;
 }
 
-export interface DeepScanResponse {
-  requestId: string;
-  timestamp: number;
+// Scanner V2 Full Scan Response Data
+export interface ScannerV2Data {
+  scanId?: string;
+  stage1?: Record<string, { probability: number; confidence: number; method?: string }>;
+  stage2?: Record<string, { probability: number; confidence: number; method?: string }>;
+  threatIntel?: {
+    hits: number;
+    verdict: string;
+    sources?: Array<{ source: string; verdict: string; severity?: string }>;
+  };
+  granularChecks?: Array<{
+    category: string;
+    name: string;
+    status: string;
+    severity?: string;
+    description?: string;
+    points?: number;
+    recommendation?: string;
+  }>;
+  categoryResults?: {
+    totalPoints: number;
+    totalPossible: number;
+    riskFactor: number;
+    categories?: Array<{
+      categoryName: string;
+      points: number;
+      maxPoints: number;
+      percentage: number;
+    }>;
+  };
+  enhancedChecks?: {
+    allFindings?: Array<{
+      service: string;
+      check: string;
+      status: string;
+      details?: string;
+    }>;
+  };
+  evidenceSummary?: {
+    domainAge?: number;
+    tlsValid?: boolean;
+    tiHits?: number;
+    hasLoginForm?: boolean;
+    autoDownload?: boolean;
+  };
+  aiSummary?: {
+    explanation?: string;
+    keyFindings?: string[];
+    riskAssessment?: string;
+    recommendedActions?: string[];
+  };
+  finalVerdict?: {
+    verdict: string;
+    trustScore: number;
+    summary: string;
+    recommendation: string;
+    positiveHighlights?: string[];
+    negativeHighlights?: string[];
+    badges?: Array<{ type: string; icon: string; text: string }>;
+  };
+  decisionGraph?: Array<{
+    stage: string;
+    status: string;
+    riskContribution: number;
+  }>;
+}
+
+export interface Evidence {
+  screenshot?: string;       // Base64
+  html?: string;            // Sanitized HTML
+  har?: object;             // HTTP Archive
+  cookies?: string[];
+  redirectChain: string[];
+}
+
+export interface TIMatch {
+  source: string;
+  type: 'blacklist' | 'whitelist';
+  indicator: string;
+  lastSeen: string;
+  confidence: number;
+  severity?: string; // HIGH, MEDIUM, LOW for blacklisted entries
+}
+
+// ============================================================================
+// CACHE TYPES
+// ============================================================================
+
+export interface CacheEntry {
+  url: string;
+  urlHash: string;
   result: ScanResult;
-  processingTimeMs: number;
-  modelResults?: Record<string, unknown>;
+  createdAt: number;
+  expiresAt: number;
 }
 
-export interface TISyncResponse {
-  timestamp: number;
-  updates: TIUpdate[];
-  nextSyncAfter?: number;
+export interface TICacheEntry {
+  hash: string;
+  isBlacklisted: boolean;
+  isWhitelisted: boolean;
+  source: string;
+  confidence: number;
+  severity?: string; // HIGH, MEDIUM, LOW for blacklisted entries
+  updatedAt: number;
 }
 
-export interface TIUpdate {
-  type: 'add' | 'remove' | 'update';
-  category: 'whitelist' | 'blacklist';
-  value: string;
-  metadata?: Record<string, unknown>;
+export interface ModelCacheEntry {
+  name: string;
+  version: string;
+  data: ArrayBuffer;
+  checksum: string;
+  cachedAt: number;
 }
+
+// ============================================================================
+// SETTINGS TYPES
+// ============================================================================
+
+export interface UserSettings {
+  privacyMode: 'normal' | 'strict';
+  enableTelemetry: boolean;
+  enableWebGPU: boolean;
+  enableGeminiNano: boolean;
+  autoScan: boolean;
+  showWarnings: boolean;
+  warningStyle: 'banner' | 'overlay' | 'popup';
+  confidenceThresholds: ConfidenceThresholds;
+}
+
+export const DEFAULT_SETTINGS: UserSettings = {
+  privacyMode: 'normal',
+  enableTelemetry: true,
+  enableWebGPU: true,
+  enableGeminiNano: true,  // Enabled by default - Chrome's Built-in AI for borderline cases
+  autoScan: true,
+  showWarnings: true,
+  warningStyle: 'banner',
+  confidenceThresholds: {
+    high: 0.90,
+    medium: 0.70,
+  },
+};
 
 // ============================================================================
 // MESSAGE TYPES
 // ============================================================================
 
-export type MessageType =
-  | 'CHAT_MESSAGE'
-  | 'SCAN_URL'
-  | 'DEEP_SCAN'
-  | 'GET_CURRENT_TAB'
-  | 'SET_AUTH_TOKEN'
-  | 'STORE_SECURE'
-  | 'GET_SECURE'
-  | 'ORCHESTRATOR_STATE'
-  | 'AUTO_SCAN';
+export type MessageAction =
+  | 'scanURL'
+  | 'deepScan'      // Full Scanner V2 deep scan
+  | 'getResult'
+  | 'getHistory'
+  | 'updateSettings'
+  | 'getSettings'
+  | 'clearCache'
+  | 'syncTI'
+  | 'extractFeatures'
+  | 'getProfile'
+  | 'saveProfile'
+  | 'updateProfile'
+  | 'addToWhitelist'
+  | 'removeFromWhitelist'
+  | 'addToBlacklist'
+  | 'removeFromBlacklist'
+  | 'clearProfile'
+  | 'syncProfile'
+  | 'preloadModels'        // Preload AI models (Start Elara AI button)
+  | 'getAIStatus'          // Get AI model loading status
+  | 'warningAcknowledged'  // User acknowledged warning banner
+  | 'pageReady'            // Content script signals page is ready
+  | 'scanResultUpdated';   // Service worker broadcasts scan result update
 
-export interface ExtensionMessage {
-  type: MessageType;
-  payload?: unknown;
+export interface Message<T = unknown> {
+  action: MessageAction;
+  payload?: T;
 }
 
-export interface ExtensionResponse<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: string;
+export interface ScanURLPayload {
+  url: string;
+  context: ScanContext;
 }
+
+export interface GetHistoryPayload {
+  limit?: number;
+  offset?: number;
+}
+
+export interface ExtractFeaturesPayload {
+  url: string;
+  tier: 1 | 2 | 3;
+}
+
+// ============================================================================
+// WORKER TYPES
+// ============================================================================
+
+export type WorkerMessageType =
+  | 'loadModel'
+  | 'runInference'
+  | 'modelLoaded'
+  | 'inferenceResult'
+  | 'error';
+
+export interface WorkerMessage<T = unknown> {
+  type: WorkerMessageType;
+  id: string;
+  payload?: T;
+}
+
+export interface LoadModelPayload {
+  name: string;
+  data: ArrayBuffer;
+}
+
+export interface RunInferencePayload {
+  modelName: string;
+  inputs: Record<string, Float32Array | BigInt64Array>;
+}
+
+export interface InferenceResultPayload {
+  modelName: string;
+  outputs: Record<string, Float32Array>;
+  latency: number;
+}
+
+// ============================================================================
+// UTILITY TYPES
+// ============================================================================
+
+export type DeepPartial<T> = {
+  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+};
+
+export type AsyncResult<T, E = Error> = Promise<
+  { success: true; data: T } | { success: false; error: E }
+>;

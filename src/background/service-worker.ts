@@ -1,13 +1,15 @@
 /**
- * Elara AI Agent - Service Worker
+ * Elara AI Agent - Unified Service Worker
  *
  * Main background script that handles:
+ * - Authentication & user profile management
  * - Message routing
- * - Agent orchestration (with Gemini backend)
+ * - Agent orchestration (Neural Service + WebLLM + Gemini)
+ * - URL scanning & ML inference
  * - Context menu integration
  * - Periodic TI sync
  *
- * @version 2.0.0 - Uses Gemini-backed orchestrator (WebLLM optional)
+ * @version 3.0.0 - Unified extension with auth flow, ML, and Neural Service
  */
 
 import { orchestrator } from './agents/orchestrator';
@@ -16,10 +18,14 @@ import { webLLMEngine } from '@/lib/webllm/webllm-engine';
 import { scannerClient } from '@/api/scanner-client';
 import { authClient } from '@/api/auth-client';
 import { secureStorage } from './crypto/encryption';
+import { authService } from '@/lib/auth/auth-service';
+import { userProfileService } from '@/lib/auth/user-profile';
 
 // Flag to track if WebLLM is available (optional enhancement)
 let webLLMReady = false;
 let modelLoadingProgress = 0;
+let authInitialized = false;
+let profileInitialized = false;
 
 // ALWAYS use the enhanced orchestrator (Gemini backend) - WebLLM is optional
 // The orchestrator uses cloud AI when WebLLM is not available
@@ -32,8 +38,10 @@ let modelLoadingProgress = 0;
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('[Elara AI Agent] Extension installed:', details.reason);
 
-  // Initialize auth client and scanner client
-  await authClient.initialize();
+  // Initialize auth services first (critical for auth flow)
+  await initializeAuthServices();
+
+  // Initialize scanner client (API client)
   await scannerClient.initialize();
 
   // Initialize enhanced orchestrator (with WebLLM)
@@ -50,17 +58,70 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
   // Create context menus
   createContextMenus();
+
+  // On fresh install, check if onboarding is needed
+  if (details.reason === 'install') {
+    console.log('[Elara AI Agent] Fresh install - checking onboarding status');
+
+    const needsOnboarding = !(await userProfileService.hasCompletedOnboarding());
+
+    if (needsOnboarding) {
+      console.log('[Elara AI Agent] Opening welcome page for first-time setup');
+      // Open full-screen welcome page for onboarding
+      chrome.tabs.create({
+        url: chrome.runtime.getURL('welcome/index.html'),
+      });
+    }
+  }
 });
 
 // Initialize on startup
 chrome.runtime.onStartup.addListener(async () => {
   console.log('[Elara AI Agent] Extension started');
-  await authClient.initialize();
+
+  // Initialize auth services first
+  await initializeAuthServices();
+
+  // Initialize scanner client
   await scannerClient.initialize();
 
   // Try to reinitialize WebLLM
   initializeWebLLM();
 });
+
+/**
+ * Initialize authentication and user profile services
+ * Critical for auth flow on extension load
+ */
+async function initializeAuthServices(): Promise<void> {
+  try {
+    console.log('[Elara AI Agent] Initializing auth services...');
+
+    // Initialize auth service (handles tokens, login state)
+    await authService.initialize();
+    authInitialized = true;
+    console.log('[Elara AI Agent] ✅ Auth service initialized');
+
+    // Initialize user profile service (handles preferences, lists)
+    await userProfileService.initialize();
+    profileInitialized = true;
+    console.log('[Elara AI Agent] ✅ User profile service initialized');
+
+    // Also initialize the legacy auth client for scanner API
+    await authClient.initialize();
+
+    // Log auth status
+    const isAuth = authService.isAuthenticated();
+    const user = authService.getUser();
+    console.log('[Elara AI Agent] Auth status:', isAuth ? `Logged in as ${user?.email}` : 'Not logged in');
+
+  } catch (error) {
+    console.error('[Elara AI Agent] Auth services initialization failed:', error);
+    // Continue anyway - user can still use extension, just won't have auth features
+    authInitialized = false;
+    profileInitialized = false;
+  }
+}
 
 /**
  * Initialize WebLLM in the background
@@ -148,6 +209,10 @@ async function handleMessage(
         await handleAutoScan(message.payload as { url: string }, sendResponse);
         break;
 
+      case 'OPEN_SIDEPANEL':
+        await handleOpenSidepanel(sendResponse);
+        break;
+
       case 'STORE_SECURE':
         await handleSecureStore(message.payload as { key: string; value: unknown }, sendResponse);
         break;
@@ -162,6 +227,68 @@ async function handleMessage(
 
       case 'LOAD_MODEL':
         await handleLoadModel(message.payload as { modelId: string }, sendResponse);
+        break;
+
+      // ========== AUTH HANDLERS ==========
+      case 'AUTH_LOGIN':
+        await handleAuthLogin(message.payload as { email: string; password: string }, sendResponse);
+        break;
+
+      case 'AUTH_LOGIN_GOOGLE':
+        await handleAuthLoginGoogle(sendResponse);
+        break;
+
+      case 'AUTH_REGISTER':
+        await handleAuthRegister(message.payload as { email: string; password: string; firstName: string; lastName: string }, sendResponse);
+        break;
+
+      case 'AUTH_LOGOUT':
+        await handleAuthLogout(sendResponse);
+        break;
+
+      case 'AUTH_GET_STATE':
+        handleAuthGetState(sendResponse);
+        break;
+
+      case 'AUTH_GET_USER':
+        handleAuthGetUser(sendResponse);
+        break;
+
+      // ========== PROFILE HANDLERS ==========
+      case 'PROFILE_GET':
+        await handleProfileGet(sendResponse);
+        break;
+
+      case 'PROFILE_SAVE':
+        await handleProfileSave(message.payload, sendResponse);
+        break;
+
+      case 'PROFILE_UPDATE':
+        await handleProfileUpdate(message.payload, sendResponse);
+        break;
+
+      case 'PROFILE_HAS_COMPLETED_ONBOARDING':
+        await handleProfileHasCompletedOnboarding(sendResponse);
+        break;
+
+      case 'WHITELIST_ADD':
+        await handleWhitelistAdd(message.payload as { domain: string }, sendResponse);
+        break;
+
+      case 'WHITELIST_REMOVE':
+        await handleWhitelistRemove(message.payload as { domain: string }, sendResponse);
+        break;
+
+      case 'BLACKLIST_ADD':
+        await handleBlacklistAdd(message.payload as { domain: string }, sendResponse);
+        break;
+
+      case 'BLACKLIST_REMOVE':
+        await handleBlacklistRemove(message.payload as { domain: string }, sendResponse);
+        break;
+
+      case 'URL_REPORT':
+        await handleUrlReport(message.payload as { url: string; reportType: string }, sendResponse);
         break;
 
       default:
@@ -277,6 +404,24 @@ async function handleAutoScan(
   await handleChatMessage({ content: message }, sendResponse);
 }
 
+async function handleOpenSidepanel(
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    // Get the current active tab
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      await chrome.sidePanel.open({ tabId: tab.id });
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, error: 'No active tab found' });
+    }
+  } catch (error) {
+    console.error('Failed to open sidepanel:', error);
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
 async function handleSecureStore(
   payload: { key: string; value: unknown },
   sendResponse: (response: unknown) => void
@@ -337,6 +482,186 @@ async function handleLoadModel(
         model: webLLMEngine.getCurrentModel()?.displayName,
       }
     });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+// ============================================================================
+// AUTH HANDLER IMPLEMENTATIONS
+// ============================================================================
+
+async function handleAuthLogin(
+  payload: { email: string; password: string },
+  sendResponse: (response: unknown) => void
+) {
+  console.log('[Elara AI Agent] AUTH_LOGIN request');
+  try {
+    const result = await authService.loginWithEmail(payload.email, payload.password);
+    sendResponse({ success: result.success, user: result.user, error: result.error });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleAuthLoginGoogle(sendResponse: (response: unknown) => void) {
+  console.log('[Elara AI Agent] AUTH_LOGIN_GOOGLE request');
+  try {
+    const result = await authService.loginWithGoogle();
+    sendResponse({ success: result.success, user: result.user, error: result.error });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleAuthRegister(
+  payload: { email: string; password: string; firstName: string; lastName: string },
+  sendResponse: (response: unknown) => void
+) {
+  console.log('[Elara AI Agent] AUTH_REGISTER request');
+  try {
+    const result = await authService.registerWithEmail(
+      payload.email,
+      payload.password,
+      payload.firstName,
+      payload.lastName
+    );
+    sendResponse({ success: result.success, user: result.user, error: result.error });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleAuthLogout(sendResponse: (response: unknown) => void) {
+  console.log('[Elara AI Agent] AUTH_LOGOUT request');
+  try {
+    await authService.logout();
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+function handleAuthGetState(sendResponse: (response: unknown) => void) {
+  const state = authService.getAuthState();
+  sendResponse({
+    success: true,
+    data: {
+      isAuthenticated: state.isAuthenticated,
+      user: state.user,
+    }
+  });
+}
+
+function handleAuthGetUser(sendResponse: (response: unknown) => void) {
+  const user = authService.getUser();
+  sendResponse({ success: true, data: user });
+}
+
+// ============================================================================
+// PROFILE HANDLER IMPLEMENTATIONS
+// ============================================================================
+
+async function handleProfileGet(sendResponse: (response: unknown) => void) {
+  try {
+    const profile = await userProfileService.getProfile();
+    sendResponse({ success: true, data: profile });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleProfileSave(
+  payload: unknown,
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await userProfileService.saveProfile(payload as Parameters<typeof userProfileService.saveProfile>[0]);
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleProfileUpdate(
+  payload: unknown,
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await userProfileService.updateProfile(payload as Parameters<typeof userProfileService.updateProfile>[0]);
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleProfileHasCompletedOnboarding(sendResponse: (response: unknown) => void) {
+  try {
+    const completed = await userProfileService.hasCompletedOnboarding();
+    sendResponse({ success: true, data: completed });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleWhitelistAdd(
+  payload: { domain: string },
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await userProfileService.addToWhitelist(payload.domain);
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleWhitelistRemove(
+  payload: { domain: string },
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await userProfileService.removeFromWhitelist(payload.domain);
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleBlacklistAdd(
+  payload: { domain: string },
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await userProfileService.addToBlacklist(payload.domain);
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleBlacklistRemove(
+  payload: { domain: string },
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await userProfileService.removeFromBlacklist(payload.domain);
+    sendResponse({ success: true });
+  } catch (error) {
+    sendResponse({ success: false, error: String(error) });
+  }
+}
+
+async function handleUrlReport(
+  payload: { url: string; reportType: string },
+  sendResponse: (response: unknown) => void
+) {
+  try {
+    await userProfileService.reportUrl(
+      payload.url,
+      payload.reportType as 'spam' | 'phishing' | 'suspicious' | 'malicious'
+    );
+    sendResponse({ success: true });
   } catch (error) {
     sendResponse({ success: false, error: String(error) });
   }

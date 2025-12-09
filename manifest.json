@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Elara AI Agent",
-  "version": "2.0.0",
-  "description": "Ask Elara - Your AI-powered cybersecurity guardian with enterprise-grade tool orchestration. Real-time phishing detection, deepfake analysis, and fact-checking.",
+  "name": "Elara AI Security Agent",
+  "version": "3.0.0",
+  "description": "AI-Powered Cybersecurity Guardian - Real-time phishing detection, threat analysis, and intelligent security assistance powered by Neural AI.",
+
+  "author": "ThiefDroppers Security",
+  "homepage_url": "https://thiefdroppers.com",
+
+  "minimum_chrome_version": "116",
 
   "icons": {
     "16": "icons/icon16.png",
@@ -11,11 +16,12 @@
   },
 
   "action": {
+    "default_popup": "popup/index.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png"
     },
-    "default_title": "Ask Elara"
+    "default_title": "Elara AI Security"
   },
 
   "side_panel": {
@@ -31,22 +37,31 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content/content-script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
 
   "permissions": [
-    "activeTab",
     "storage",
+    "unlimitedStorage",
+    "activeTab",
     "sidePanel",
     "contextMenus",
+    "webNavigation",
     "alarms",
-    "scripting"
+    "scripting",
+    "offscreen",
+    "identity",
+    "cookies"
   ],
 
   "host_permissions": [
+    "<all_urls>",
     "https://dev-api.thiefdroppers.com/*",
     "https://api.thiefdroppers.com/*",
+    "https://e-brain-dashboard-122460113662.us-west1.run.app/*",
+    "https://neural-service-api-p5ijr7bleq-uw.a.run.app/*",
     "https://huggingface.co/*",
     "https://cdn-lfs.huggingface.co/*",
     "https://cdn-lfs-us-1.huggingface.co/*",
@@ -55,14 +70,35 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["models/*"],
+      "resources": [
+        "models/*.onnx",
+        "models/*.wasm",
+        "models/*.json",
+        "models/*.bin",
+        "models/*.txt",
+        "lib/*.wasm",
+        "lib/*.mjs",
+        "*.wasm",
+        "*.mjs",
+        "assets/images/*"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
 
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+    "extension_pages": "style-src-elem 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'wasm-unsafe-eval'; default-src 'self' data:; connect-src 'self' data: https://huggingface.co https://cdn-lfs.huggingface.co https://cdn-lfs-us-1.huggingface.co https://raw.githubusercontent.com https://cdn-lfs-us-1.hf.co https://e-brain-dashboard-122460113662.us-west1.run.app https://neural-service-api-p5ijr7bleq-uw.a.run.app https://api.thiefdroppers.com https://dev-api.thiefdroppers.com; object-src 'self';"
   },
+
+  "externally_connectable": {
+    "matches": [
+      "https://thiefdroppers.com/*",
+      "https://dev.thiefdroppers.com/*",
+      "http://136.117.33.149/*"
+    ]
+  },
+
+  "options_page": "popup/options.html",
 
   "commands": {
     "_execute_action": {
@@ -70,7 +106,27 @@
         "default": "Ctrl+Shift+E",
         "mac": "Command+Shift+E"
       },
-      "description": "Open Elara AI Agent"
+      "description": "Open Elara AI Security"
+    },
+    "scan-current-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Scan current page for threats"
     }
-  }
+  },
+
+  "offline_enabled": true,
+
+  "oauth2": {
+    "client_id": "122460113662-e8fds1n2suqs53apv6sk49ru07dcco92.apps.googleusercontent.com",
+    "scopes": [
+      "openid",
+      "email",
+      "profile"
+    ]
+  },
+
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnbbtbRc9bN7C6ICtRQ5GEvKcY3gmEy64ZnjGdTWVqbqy7ivA6uk4HIhK5lwkIjQWvwbihGVgGjqr0CMJtaLldoaNJSA3vxC80N4rno6prAvBFoI2AkoG3iZ4OsT2LdgsxBiwd9+K9H0VUW0xoMbjZg+jTGZfAJIznnM9rUgKpy9nES+h1ywjGtV54LT4Djyn9IdidKsAHZ6236BRu19VXCnt7pQULiYsKze9cuM+CtnTq8H2aYGrsgeQ7d2/qO0dJ7H5Wa2IYJ1sZJPTF57PFKHi2roR4VtxE/enuolrIw5aXq12O70nGaSbbEV+th0eljkrtw+gfXczF8ewfUXEnwIDAQAB"
 }

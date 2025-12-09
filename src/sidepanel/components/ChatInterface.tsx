@@ -1,10 +1,12 @@
 /**
- * Elara AI Agent - Chat Interface Component
+ * Ask Elara - AI Cybersecurity Guardian
+ * Chat Interface with Enhanced Loading State
  */
 
 import React, { useRef, useEffect } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { ThreatCard } from './ThreatCard';
+import { LoadingState } from './LoadingState';
 
 interface Message {
   id: string;
@@ -34,10 +36,11 @@ interface Message {
 interface ChatInterfaceProps {
   messages: Message[];
   isLoading: boolean;
+  loadingStartTime: number;
   error: string | null;
 }
 
-export function ChatInterface({ messages, isLoading, error }: ChatInterfaceProps) {
+export function ChatInterface({ messages, isLoading, loadingStartTime, error }: ChatInterfaceProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -56,16 +59,9 @@ export function ChatInterface({ messages, isLoading, error }: ChatInterfaceProps
           </div>
         ))}
 
-        {isLoading && (
+        {isLoading && loadingStartTime > 0 && (
           <div className="message-wrapper assistant">
-            <div className="message-bubble assistant loading">
-              <div className="typing-indicator">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-              <span className="loading-text">Analyzing...</span>
-            </div>
+            <LoadingState startTime={loadingStartTime} />
           </div>
         )}
 

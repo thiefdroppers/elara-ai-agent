@@ -1,5 +1,6 @@
 /**
- * Elara AI Agent - Welcome Screen Component
+ * Ask Elara - AI Cybersecurity Guardian
+ * Welcome Screen with ThiefDroppers Branding
  */
 
 import React from 'react';
@@ -13,7 +14,15 @@ export function WelcomeScreen({ onQuickAction }: WelcomeScreenProps) {
     <div className="welcome-screen">
       <div className="welcome-logo">
         <div className="logo-circle">
-          <span>E</span>
+          {/* ThiefDroppers Arrow Logo */}
+          <svg width="56" height="56" viewBox="0 0 111.92 111.92" xmlns="http://www.w3.org/2000/svg">
+            <polygon fill="#0070f3" points="55.82 45.56 55.82 94.9 42.78 81 42.78 51.79 54.99 45.15 55.81 44.64 55.81 45.56 55.82 45.56"/>
+            <polygon fill="#03d8fb" points="69.46 51.93 69.46 81 55.82 94.9 55.82 44.64 56.22 44.89 56.63 45.15 69.46 51.93"/>
+            <polygon fill="#0070f3" points="55.81 44.64 54.99 45.15 42.78 51.79 18.91 40.04 18.22 26.68 55.19 44.37 55.81 44.64"/>
+            <polygon fill="#03d8fb" points="55.81 31.53 55.81 44.64 55.19 44.37 18.22 26.68 33.19 21.71 55.81 31.53"/>
+            <polygon fill="#0070f3" points="93.71 26.68 93.01 40.04 69.46 51.92 69.46 51.93 56.63 45.15 56.22 44.89 55.82 44.64 55.82 44.63 56.07 44.53 56.45 44.37 93.71 26.68"/>
+            <polygon fill="#03d8fb" points="93.71 26.68 56.45 44.37 56.07 44.53 55.82 44.63 55.82 44.37 55.81 44.37 55.81 31.53 78.73 21.71 93.71 26.68"/>
+          </svg>
         </div>
       </div>
 
@@ -29,8 +38,8 @@ export function WelcomeScreen({ onQuickAction }: WelcomeScreenProps) {
             </svg>
           </div>
           <div className="capability-text">
-            <h3>URL Scanning</h3>
-            <p>Detect phishing & malware in real-time</p>
+            <h3>URL & Link Scanning</h3>
+            <p>Detect phishing, malware, and suspicious URLs in real-time</p>
           </div>
         </div>
 
@@ -44,7 +53,7 @@ export function WelcomeScreen({ onQuickAction }: WelcomeScreenProps) {
           </div>
           <div className="capability-text">
             <h3>Deepfake Detection</h3>
-            <p>Identify AI-manipulated images & videos</p>
+            <p>Identify AI-manipulated images and videos</p>
           </div>
         </div>
 
@@ -64,15 +73,14 @@ export function WelcomeScreen({ onQuickAction }: WelcomeScreenProps) {
         <div className="capability">
           <div className="capability-icon learn">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M2 3H22V21H2Z" />
-              <path d="M7 8H17" />
-              <path d="M7 12H17" />
-              <path d="M7 16H13" />
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
             </svg>
           </div>
           <div className="capability-text">
             <h3>Security Education</h3>
-            <p>Learn about cyber threats & protection</p>
+            <p>Learn about cyber threats and how to protect yourself</p>
           </div>
         </div>
       </div>
@@ -92,6 +100,12 @@ export function WelcomeScreen({ onQuickAction }: WelcomeScreenProps) {
             <line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
           What Can You Do?
+        </button>
+        <button className="quick-action" onClick={() => onQuickAction('tips')}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" />
+          </svg>
+          Security Tips
         </button>
       </div>
 

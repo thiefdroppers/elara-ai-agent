@@ -1,5 +1,6 @@
 /**
- * Elara AI Agent - Threat Card Component
+ * Ask Elara - AI Cybersecurity Guardian
+ * Threat Card Component for displaying scan results
  */
 
 import React from 'react';
@@ -21,70 +22,72 @@ interface ThreatCardProps {
 }
 
 export function ThreatCard({ card }: ThreatCardProps) {
-  const getVerdictClass = (verdict: string) => {
-    switch (verdict) {
-      case 'SAFE': return 'safe';
-      case 'SUSPICIOUS': return 'suspicious';
-      case 'DANGEROUS': return 'dangerous';
-      default: return 'unknown';
+  const getCardClass = () => {
+    switch (card.riskLevel.toLowerCase()) {
+      case 'safe':
+      case 'low':
+        return 'safe';
+      case 'medium':
+      case 'suspicious':
+        return 'suspicious';
+      case 'high':
+      case 'critical':
+      case 'dangerous':
+        return 'dangerous';
+      default:
+        return '';
     }
   };
 
-  const getVerdictIcon = (verdict: string) => {
-    switch (verdict) {
-      case 'SAFE': return 'check';
-      case 'SUSPICIOUS': return 'warning';
-      case 'DANGEROUS': return 'alert';
-      default: return 'help';
+  const getVerdictIcon = () => {
+    switch (card.riskLevel.toLowerCase()) {
+      case 'safe':
+      case 'low':
+        return (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+            <polyline points="20,6 9,17 4,12" />
+          </svg>
+        );
+      case 'medium':
+      case 'suspicious':
+        return (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+            <path d="M12 9v4" />
+            <path d="M12 17h.01" />
+          </svg>
+        );
+      case 'high':
+      case 'critical':
+      case 'dangerous':
+        return (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        );
+      default:
+        return (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9A3 3 0 0115 9.5C15 11 12 12 12 12" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        );
     }
   };
-
-  const getSeverityClass = (severity: string) => {
-    switch (severity) {
-      case 'critical': return 'critical';
-      case 'high': return 'high';
-      case 'medium': return 'medium';
-      default: return 'low';
-    }
-  };
-
-  const riskPercent = Math.round(card.riskScore * 100);
 
   return (
-    <div className={`threat-card ${getVerdictClass(card.verdict)}`}>
+    <div className={`threat-card ${getCardClass()}`}>
       <div className="threat-header">
         <div className="threat-verdict">
-          <span className={`verdict-icon ${getVerdictClass(card.verdict)}`}>
-            {getVerdictIcon(card.verdict) === 'check' && (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M20 6L9 17L4 12" />
-              </svg>
-            )}
-            {getVerdictIcon(card.verdict) === 'warning' && (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 9V13M12 17H12.01M10.29 3.86L1.82 18A2 2 0 003.64 21H20.36A2 2 0 0022.18 18L13.71 3.86A2 2 0 0010.29 3.86Z" />
-              </svg>
-            )}
-            {getVerdictIcon(card.verdict) === 'alert' && (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-            )}
-            {getVerdictIcon(card.verdict) === 'help' && (
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9A3 3 0 0115 9.5C15 11 12 12 12 12" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-            )}
-          </span>
+          <div className={`verdict-icon ${getCardClass()}`}>
+            {getVerdictIcon()}
+          </div>
           <span className="verdict-text">{card.verdict}</span>
         </div>
         <div className="risk-badge">
           <span className="risk-level">{card.riskLevel}</span>
-          <span className="risk-percent">{riskPercent}%</span>
+          <span className="risk-percent">{card.riskScore}%</span>
         </div>
       </div>
 
@@ -95,14 +98,14 @@ export function ThreatCard({ card }: ThreatCardProps) {
         </div>
       )}
 
-      {card.indicators.length > 0 && (
+      {card.indicators && card.indicators.length > 0 && (
         <div className="threat-indicators">
-          <div className="indicators-label">Indicators Found:</div>
+          <div className="indicators-label">Key Indicators</div>
           <ul className="indicators-list">
-            {card.indicators.slice(0, 5).map((indicator, index) => (
-              <li key={index} className={`indicator ${getSeverityClass(indicator.severity)}`}>
-                <span className="indicator-severity">{indicator.severity.toUpperCase()}</span>
-                <span className="indicator-desc">{indicator.description}</span>
+            {card.indicators.slice(0, 4).map((indicator, index) => (
+              <li key={index} className={`indicator ${indicator.severity.toLowerCase()}`}>
+                <span className="indicator-severity">{indicator.severity}</span>
+                <span className="indicator-text">{indicator.description}</span>
               </li>
             ))}
           </ul>
@@ -110,7 +113,7 @@ export function ThreatCard({ card }: ThreatCardProps) {
       )}
 
       <div className="threat-recommendation">
-        <div className="recommendation-label">Recommendation:</div>
+        <div className="recommendation-label">Recommendation</div>
         <div className="recommendation-text">{card.recommendation}</div>
       </div>
     </div>

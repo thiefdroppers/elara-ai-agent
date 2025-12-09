@@ -1,5 +1,5 @@
 /**
- * Elara AI Agent - Enhanced Orchestrator
+ * Elara AI Agent - Enhanced Orchestrator with E-BRAIN Neural Memory
  *
  * Enterprise-grade multi-agent coordinator with:
  * - Zero-LLM intent classification (80% of requests)
@@ -7,12 +7,33 @@
  * - Parallel tool execution with circuit breakers
  * - Intelligent routing to appropriate handlers
  * - Function/Tool calling via Gemini AI
+ * - E-BRAIN Bio-Inspired Memory Integration (v2.0)
+ *   - STDP (Spike-Timing-Dependent Plasticity) temporal learning
+ *   - Hebbian co-activation strengthening
+ *   - Autonomous knowledge acquisition
+ *   - Persistent conversation memory
+ *   - Threat pattern learning
+ *   - User behavior profiling
  *
- * @version 2.0.0 - Enhanced with Prompt Registry
+ * @version 2.1.0 - Neural Memory Integration
  */
 
 import { scannerClient } from '@/api/scanner-client';
 import { functionRouter, AVAILABLE_FUNCTIONS } from './function-router';
+import {
+  neuralLLMClient,
+  type MemoryContext as LLMMemoryContext,
+} from '@/lib/llm';
+import {
+  NeuralMemoryService,
+  initNeuralMemory,
+  getNeuralMemory,
+  isNeuralMemoryInitialized,
+  type ScanMemory,
+  type ConversationMemory,
+  type MemoryContext,
+  type NeuralMemoryMetrics,
+} from '@/lib/neural-memory-service';
 import {
   intentClassifier,
   toolExecutor,
@@ -35,6 +56,46 @@ import type {
   ThreatCard,
   RiskLevel,
 } from '@/types';
+
+// ============================================================================
+// E-BRAIN CONFIGURATION
+// ============================================================================
+
+/**
+ * E-BRAIN Neural Memory Configuration
+ * Production-ready settings for maximum utilization
+ */
+const EBRAIN_CONFIG = {
+  // E-BRAIN Dashboard REST API endpoint (Cloud Run direct URL)
+  baseURL: 'https://e-brain-dashboard-122460113662.us-west1.run.app',
+  // Agent API Key (registered in E-BRAIN)
+  apiKey: process.env.EBRAIN_API_KEY || 'ebrain_ak_elara_ai_agent_v2_1733531443',
+  // Agent ID for memory isolation
+  agentId: 'elara_ai_agent_v2',
+  // HTTP settings
+  timeout: 15000,
+  maxRetries: 3,
+  retryDelay: 500,
+  // Cache settings (5 minute TTL)
+  cacheTTL: 300000,
+  maxCacheSize: 1000,
+  // Neural memory settings
+  scanImportanceBase: 0.6,
+  conversationImportanceBase: 0.4,
+  threatPatternImportanceBase: 0.8,
+  maxContextMemories: 10,
+  minSimilarityThreshold: 0.5,
+  contextCacheTTL: 60000,
+  // Bio-inspired learning (all enabled)
+  enableAutonomousLearning: true,
+  enableHebbianLearning: true,
+  enableSTDPLearning: true,
+  // Memory lifecycle
+  workingMemoryTTL: 300000, // 5 minutes
+  enableDecay: true,
+  // Debug mode
+  debug: process.env.NODE_ENV !== 'production',
+};
 
 // ============================================================================
 // SYSTEM PROMPTS (Pre-generated, TOON-optimized)
@@ -116,9 +177,95 @@ export class AgentOrchestrator {
     toolExecutions: new Map<string, number>(),
   };
 
+  // Neural Memory Service (E-BRAIN integration)
+  private neuralMemory: NeuralMemoryService | null = null;
+  private neuralMemoryInitialized: boolean = false;
+  private neuralMemoryStats = {
+    memoriesStored: 0,
+    memoriesRetrieved: 0,
+    scansStored: 0,
+    conversationsStored: 0,
+    threatPatternsLearned: 0,
+    totalLatencyMs: 0,
+    errors: 0,
+  };
+
   constructor() {
     // Register tool handlers with the executor
     this.registerToolHandlers();
+    // Initialize E-BRAIN Neural Memory (async, non-blocking)
+    this.initializeNeuralMemory();
+  }
+
+  // --------------------------------------------------------------------------
+  // E-BRAIN Neural Memory Initialization
+  // --------------------------------------------------------------------------
+
+  /**
+   * Initialize the E-BRAIN Neural Memory Service
+   * Non-blocking - orchestrator continues to work even if E-BRAIN is unavailable
+   */
+  private async initializeNeuralMemory(): Promise<void> {
+    try {
+      console.log('[Orchestrator] Initializing E-BRAIN Neural Memory...');
+
+      // Initialize the Neural Memory Service singleton
+      this.neuralMemory = initNeuralMemory(EBRAIN_CONFIG);
+      await this.neuralMemory.initialize();
+
+      this.neuralMemoryInitialized = true;
+      console.log('[Orchestrator] E-BRAIN Neural Memory ACTIVE', {
+        endpoint: EBRAIN_CONFIG.baseURL,
+        agentId: EBRAIN_CONFIG.agentId,
+        features: {
+          stdp: EBRAIN_CONFIG.enableSTDPLearning,
+          hebbian: EBRAIN_CONFIG.enableHebbianLearning,
+          autonomous: EBRAIN_CONFIG.enableAutonomousLearning,
+        },
+      });
+    } catch (error) {
+      console.warn('[Orchestrator] E-BRAIN Neural Memory initialization failed', {
+        error: error instanceof Error ? error.message : String(error),
+        fallback: 'Using in-memory conversation context only',
+      });
+      this.neuralMemoryStats.errors++;
+      // Don't throw - orchestrator continues with degraded memory
+    }
+  }
+
+  /**
+   * Get Neural Memory status for monitoring
+   */
+  async getNeuralMemoryStatus(): Promise<{
+    active: boolean;
+    healthy: boolean;
+    stats: typeof this.neuralMemoryStats;
+    metrics?: NeuralMemoryMetrics;
+  }> {
+    if (!this.neuralMemoryInitialized || !this.neuralMemory) {
+      return {
+        active: false,
+        healthy: false,
+        stats: this.neuralMemoryStats,
+      };
+    }
+
+    try {
+      const metrics = await this.neuralMemory.getMetrics();
+      const healthy = await this.neuralMemory.healthCheck();
+      return {
+        active: true,
+        healthy,
+        stats: this.neuralMemoryStats,
+        metrics,
+      };
+    } catch {
+      return {
+        active: true,
+        healthy: false,
+        stats: this.neuralMemoryStats,
+      };
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -178,6 +325,206 @@ export class AgentOrchestrator {
       userMood: 'neutral',
       sessionStart: Date.now(),
     };
+  }
+
+  // --------------------------------------------------------------------------
+  // E-BRAIN Neural Memory Operations
+  // --------------------------------------------------------------------------
+
+  /**
+   * Store conversation turn in E-BRAIN (async, non-blocking)
+   * Triggers Hebbian co-activation learning when related memories accessed
+   */
+  private async persistConversationToNeuralMemory(
+    userMessage: string,
+    assistantResponse: string,
+    intent: string,
+    scanResult?: ScanResult
+  ): Promise<void> {
+    if (!this.neuralMemoryInitialized || !this.neuralMemory) return;
+
+    const startTime = performance.now();
+
+    try {
+      // Store conversation as episodic memory
+      const conversationMemory: ConversationMemory = {
+        userMessage,
+        assistantResponse,
+        intent,
+        userMood: this.conversationContext.userMood,
+        entities: scanResult ? { url: scanResult.url, verdict: scanResult.verdict } : undefined,
+        actionTaken: scanResult ? `scan_${scanResult.scanType}` : undefined,
+      };
+
+      await this.neuralMemory.storeConversation(conversationMemory);
+
+      this.neuralMemoryStats.conversationsStored++;
+      this.neuralMemoryStats.memoriesStored++;
+      this.neuralMemoryStats.totalLatencyMs += performance.now() - startTime;
+
+      console.log('[Orchestrator] Conversation persisted to E-BRAIN', {
+        intent,
+        mood: this.conversationContext.userMood,
+        latency: `${(performance.now() - startTime).toFixed(0)}ms`,
+      });
+    } catch (error) {
+      console.warn('[Orchestrator] Failed to persist conversation to E-BRAIN', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.neuralMemoryStats.errors++;
+    }
+  }
+
+  /**
+   * Store scan result in E-BRAIN (async, non-blocking)
+   * Automatically learns threat patterns for dangerous URLs
+   */
+  private async persistScanToNeuralMemory(scanResult: ScanResult): Promise<void> {
+    if (!this.neuralMemoryInitialized || !this.neuralMemory) return;
+
+    const startTime = performance.now();
+
+    try {
+      const scanMemory: ScanMemory = {
+        url: scanResult.url,
+        verdict: this.mapVerdictToScanVerdict(scanResult.verdict),
+        riskLevel: scanResult.riskLevel,
+        confidence: scanResult.confidence,
+        threatTypes: scanResult.threatType ? [scanResult.threatType] : undefined,
+        scanType: this.mapScanTypeToScanMemoryType(scanResult.scanType),
+        latencyMs: scanResult.latency || 0,
+        userFeedback: null,
+      };
+
+      await this.neuralMemory.storeScanResult(scanMemory);
+
+      this.neuralMemoryStats.scansStored++;
+      this.neuralMemoryStats.memoriesStored++;
+      this.neuralMemoryStats.totalLatencyMs += performance.now() - startTime;
+
+      // Track threat pattern learning
+      if (scanResult.verdict === 'DANGEROUS') {
+        this.neuralMemoryStats.threatPatternsLearned++;
+      }
+
+      console.log('[Orchestrator] Scan persisted to E-BRAIN', {
+        url: scanResult.url,
+        verdict: scanResult.verdict,
+        latency: `${(performance.now() - startTime).toFixed(0)}ms`,
+      });
+    } catch (error) {
+      console.warn('[Orchestrator] Failed to persist scan to E-BRAIN', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.neuralMemoryStats.errors++;
+    }
+  }
+
+  /**
+   * Retrieve neural memory context before generating response
+   * Enhances response with relevant past memories via semantic search
+   */
+  private async getNeuraContextForMessage(userMessage: string): Promise<MemoryContext | null> {
+    if (!this.neuralMemoryInitialized || !this.neuralMemory) return null;
+
+    const startTime = performance.now();
+
+    try {
+      const context = await this.neuralMemory.getContextForMessage(userMessage, {
+        includeScans: true,
+        includeConversations: true,
+        includeThreatPatterns: true,
+        maxMemories: 10,
+      });
+
+      this.neuralMemoryStats.memoriesRetrieved += context.relevantMemories.length;
+      this.neuralMemoryStats.totalLatencyMs += performance.now() - startTime;
+
+      console.log('[Orchestrator] Neural context retrieved', {
+        memories: context.relevantMemories.length,
+        hasScans: (context.recentScans?.length || 0) > 0,
+        hasThreatPatterns: (context.threatPatterns?.length || 0) > 0,
+        insufficientData: context.insufficientData,
+        latency: `${(performance.now() - startTime).toFixed(0)}ms`,
+      });
+
+      return context;
+    } catch (error) {
+      console.warn('[Orchestrator] Failed to get neural context', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.neuralMemoryStats.errors++;
+      return null;
+    }
+  }
+
+  /**
+   * Update user behavior profile in E-BRAIN
+   */
+  private async updateUserProfileInNeuralMemory(
+    action: 'whitelist' | 'blacklist' | 'scan' | 'feedback',
+    data: Record<string, any>
+  ): Promise<void> {
+    if (!this.neuralMemoryInitialized || !this.neuralMemory) return;
+
+    try {
+      await this.neuralMemory.updateUserProfile(action, data);
+      console.log('[Orchestrator] User profile updated in E-BRAIN', { action });
+    } catch (error) {
+      console.warn('[Orchestrator] Failed to update user profile', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Query E-BRAIN knowledge (triggers autonomous learning if insufficient)
+   */
+  async queryNeuralKnowledge(query: string): Promise<{ found: boolean; content?: string; source?: string }> {
+    if (!this.neuralMemoryInitialized || !this.neuralMemory) {
+      return { found: false };
+    }
+
+    try {
+      const result = await this.neuralMemory.queryKnowledge(query);
+
+      if (result.memories.length > 0 && result.similarities[0] > 0.7) {
+        return {
+          found: true,
+          content: result.memories[0].content,
+          source: result.insufficientData ? 'autonomous_learning' : 'memory',
+        };
+      }
+
+      return { found: false };
+    } catch {
+      return { found: false };
+    }
+  }
+
+  // Helper methods for type mapping
+  private mapVerdictToScanVerdict(verdict: string): 'safe' | 'suspicious' | 'dangerous' | 'phishing' {
+    switch (verdict) {
+      case 'SAFE':
+        return 'safe';
+      case 'SUSPICIOUS':
+        return 'suspicious';
+      case 'DANGEROUS':
+        return 'dangerous';
+      default:
+        return 'suspicious';
+    }
+  }
+
+  private mapScanTypeToScanMemoryType(scanType: string): 'edge' | 'hybrid' | 'deep' {
+    switch (scanType?.toLowerCase()) {
+      case 'edge':
+        return 'edge';
+      case 'deep':
+        return 'deep';
+      default:
+        return 'hybrid';
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -247,6 +594,29 @@ export class AgentOrchestrator {
     toolExecutor.registerTool('web_search', async (params: { query: string }) => {
       return await scannerClient.webSearch(params.query);
     });
+
+    // =========================================================================
+    // E-BRAIN V3: Register all 16 security tool handlers
+    // =========================================================================
+    this.registerV3ToolHandlers();
+  }
+
+  /**
+   * Register E-BRAIN V3 Security Tool Handlers
+   * Implements all 16 patent-ready security tools
+   */
+  private registerV3ToolHandlers(): void {
+    // Import handlers dynamically to avoid circular dependencies
+    import('@/lib/tools/handlers').then(({ allToolHandlers }) => {
+      // Register each V3 tool handler
+      Object.entries(allToolHandlers).forEach(([name, handler]) => {
+        toolExecutor.registerTool(name, handler as (params: Record<string, unknown>) => Promise<unknown>);
+        console.log(`[Orchestrator] Registered V3 tool: ${name}`);
+      });
+      console.log(`[Orchestrator] E-BRAIN V3: ${Object.keys(allToolHandlers).length} tools registered`);
+    }).catch((error) => {
+      console.error('[Orchestrator] Failed to register V3 tool handlers:', error);
+    });
   }
 
   // --------------------------------------------------------------------------
@@ -290,6 +660,28 @@ export class AgentOrchestrator {
     try {
       this.setState({ state: 'planning', progress: 10 });
 
+      // =========================================================================
+      // E-BRAIN Integration: Retrieve neural context for enhanced response
+      // =========================================================================
+      const neuralContext = await this.getNeuraContextForMessage(content);
+      if (neuralContext) {
+        // Store in working memory for use during response generation
+        this.neuralMemory?.setWorkingMemory('current_context', neuralContext);
+
+        // Log neural context insights
+        if (neuralContext.recentScans && neuralContext.recentScans.length > 0) {
+          console.log('[Orchestrator] E-BRAIN Context: Found similar scans', {
+            count: neuralContext.recentScans.length,
+            suggestedActions: neuralContext.suggestedActions,
+          });
+        }
+        if (neuralContext.threatPatterns && neuralContext.threatPatterns.length > 0) {
+          console.log('[Orchestrator] E-BRAIN Context: Matched threat patterns', {
+            count: neuralContext.threatPatterns.length,
+          });
+        }
+      }
+
       // Step 1: Zero-LLM Intent Classification
       const classification = intentClassifier.classify(content);
       console.log('[Orchestrator] Intent classified:', {
@@ -300,6 +692,8 @@ export class AgentOrchestrator {
         entities: classification.entities,
         mood: this.conversationContext.userMood,
         conversationLength: this.conversationContext.turns.length,
+        neuralMemoryActive: this.neuralMemoryInitialized,
+        neuralContextMemories: neuralContext?.relevantMemories?.length || 0,
       });
 
       this.setState({ state: 'executing', progress: 30, currentTask: classification.intent });
@@ -359,7 +753,7 @@ export class AgentOrchestrator {
             break;
           case 'general_chat':
           default:
-            response = await this.handleGeneralChat(content, classification);
+            response = await this.handleGeneralChat(content, classification, neuralContext);
         }
       }
 
@@ -371,6 +765,44 @@ export class AgentOrchestrator {
         intent: classification.intent,
         scanResult: response.metadata?.scanResult as ScanResult | undefined,
       });
+
+      // =========================================================================
+      // E-BRAIN Integration: Persist conversation and scan results (non-blocking)
+      // =========================================================================
+      const scanResult = response.metadata?.scanResult as ScanResult | undefined;
+
+      // Persist conversation to E-BRAIN (async, fire-and-forget)
+      this.persistConversationToNeuralMemory(
+        content,
+        response.content,
+        classification.intent,
+        scanResult
+      ).catch(() => {}); // Swallow errors - non-critical
+
+      // Persist scan result to E-BRAIN if present (async, fire-and-forget)
+      if (scanResult) {
+        this.persistScanToNeuralMemory(scanResult).catch(() => {});
+        // Update user profile for scan action
+        this.updateUserProfileInNeuralMemory('scan', {
+          scanType: scanResult.scanType,
+          verdict: scanResult.verdict,
+        }).catch(() => {});
+      }
+
+      // Add neural memory metadata to response
+      response.metadata = {
+        ...response.metadata,
+        neuralMemory: {
+          active: this.neuralMemoryInitialized,
+          contextMemories: neuralContext?.relevantMemories?.length || 0,
+          suggestedActions: neuralContext?.suggestedActions || [],
+          stats: {
+            memoriesStored: this.neuralMemoryStats.memoriesStored,
+            scansStored: this.neuralMemoryStats.scansStored,
+            conversationsStored: this.neuralMemoryStats.conversationsStored,
+          },
+        },
+      };
 
       this.setState({ state: 'complete', progress: 100 });
       return response;
@@ -764,6 +1196,11 @@ Please share the text you'd like me to analyze.`,
       ? `**Domain Whitelisted**\n\n"${targetDomain}" has been added to your whitelist. Future scans will mark this domain as trusted.`
       : `**Whitelist Failed**\n\n_Error: ${result.error}_`;
 
+    // E-BRAIN: Update user profile with whitelist action
+    if (result.status === 'SUCCESS') {
+      this.updateUserProfileInNeuralMemory('whitelist', { domain: targetDomain }).catch(() => {});
+    }
+
     return {
       id: crypto.randomUUID(),
       role: 'assistant',
@@ -797,6 +1234,11 @@ Please share the text you'd like me to analyze.`,
     const content = result.status === 'SUCCESS'
       ? `**Domain Blacklisted**\n\n"${targetDomain}" has been added to your blacklist. You'll be warned if you encounter this domain.`
       : `**Blacklist Failed**\n\n_Error: ${result.error}_`;
+
+    // E-BRAIN: Update user profile with blacklist action
+    if (result.status === 'SUCCESS') {
+      this.updateUserProfileInNeuralMemory('blacklist', { domain: targetDomain }).catch(() => {});
+    }
 
     return {
       id: crypto.randomUUID(),
@@ -985,7 +1427,7 @@ Try: "What is phishing?" or "Explain typosquatting"`,
     const hasRecentScan = !!this.conversationContext.lastScannedUrl;
 
     try {
-      console.log('[Orchestrator] Generating contextual greeting...');
+      console.log('[Orchestrator] Generating contextual greeting via Neural Service...');
 
       // Build a contextual prompt
       let prompt = '';
@@ -998,24 +1440,49 @@ Try: "What is phishing?" or "Explain typosquatting"`,
         prompt = `This is a new conversation. Greet the user warmly as Elara, their cybersecurity assistant. Mention you can help scan URLs for threats and answer security questions. Be friendly, not robotic. Under 40 words.`;
       }
 
-      const aiResponse = await scannerClient.chat(prompt, {
-        systemPrompt: CONVERSATIONAL_SYSTEM_PROMPT,
+      // Use Neural LLM Client with fallback chain: Neural Service -> WebLLM -> Gemini
+      const messages: ChatMessage[] = [
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: CONVERSATIONAL_SYSTEM_PROMPT,
+          timestamp: Date.now(),
+        },
+        {
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: prompt,
+          timestamp: Date.now(),
+        },
+      ];
+
+      const result = await neuralLLMClient.generate(messages, {
+        temperature: 0.8,
+        maxTokens: 150,
+      });
+
+      console.log('[Orchestrator] Greeting response:', {
+        provider: result.provider,
+        latencyMs: result.latencyMs,
+        fallbackReason: result.fallbackReason,
       });
 
       return {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: aiResponse,
+        content: result.content,
         timestamp: Date.now(),
         metadata: {
           intent: 'greeting',
-          source: 'gemini',
+          source: result.provider,
           zeroLLM: false,
           isReturningUser,
+          latency: result.latencyMs,
+          fallback: !!result.fallbackReason,
         },
       };
     } catch (error) {
-      console.warn('[Orchestrator] Gemini greeting failed, using contextual fallback:', error);
+      console.warn('[Orchestrator] Neural greeting failed, using contextual fallback:', error);
 
       // Contextual static fallback
       let fallbackGreeting = '';
@@ -1039,23 +1506,19 @@ Try: "What is phishing?" or "Explain typosquatting"`,
 
   // --------------------------------------------------------------------------
   // General Chat Handler (Context-Aware, LLM Required)
+  // CRITICAL FIX: Now injects E-BRAIN memory context into LLM prompts
   // --------------------------------------------------------------------------
 
   private async handleGeneralChat(
     message: string,
-    classification: EnhancedIntentClassification
+    classification: EnhancedIntentClassification,
+    neuralContext?: MemoryContext | null
   ): Promise<ChatMessage> {
     try {
-      console.log('[Orchestrator] Using Cloud AI for conversational chat');
+      console.log('[Orchestrator] Using Neural LLM with E-BRAIN memory context');
 
-      // Build rich context for Gemini
+      // Build rich context for conversation
       const conversationHistory = this.getConversationSummary();
-
-      // Create a contextual prompt
-      let contextualPrompt = message;
-      if (conversationHistory) {
-        contextualPrompt = `${conversationHistory}\n\nUser's current message: ${message}\n\nRespond naturally, referencing previous context if relevant. Be helpful and conversational.`;
-      }
 
       // Add mood-based guidance
       let moodGuidance = '';
@@ -1071,30 +1534,129 @@ Try: "What is phishing?" or "Explain typosquatting"`,
           break;
       }
 
+      // Build system prompt with mood guidance
       const systemPrompt = `${CONVERSATIONAL_SYSTEM_PROMPT}\n\n${moodGuidance}`;
 
-      const aiResponse = await scannerClient.chat(contextualPrompt, {
-        systemPrompt,
-        availableTools: Object.keys(AVAILABLE_FUNCTIONS),
+      // Build message array for Neural LLM Client
+      const messages: ChatMessage[] = [
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: systemPrompt,
+          timestamp: Date.now(),
+        },
+      ];
+
+      // Add conversation history as context
+      if (conversationHistory) {
+        messages.push({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `## Recent Conversation\n${conversationHistory}`,
+          timestamp: Date.now(),
+        });
+      }
+
+      // Add the current user message
+      messages.push({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: message,
+        timestamp: Date.now(),
+      });
+
+      // =========================================================================
+      // CRITICAL FIX: Convert E-BRAIN MemoryContext to LLM MemoryContext
+      // This is the heart of fixing the "Write-Only Brain" problem!
+      // =========================================================================
+      const llmMemoryContext = this.convertToLLMMemoryContext(neuralContext);
+
+      // Log memory injection status
+      if (llmMemoryContext && !llmMemoryContext.insufficientData) {
+        console.log('[Orchestrator] Injecting E-BRAIN memory context:', {
+          relevantMemories: llmMemoryContext.relevantMemories?.length || 0,
+          recentScans: llmMemoryContext.recentScans?.length || 0,
+          threatPatterns: llmMemoryContext.threatPatterns?.length || 0,
+          suggestedActions: llmMemoryContext.suggestedActions?.length || 0,
+        });
+      }
+
+      // Use Neural LLM Client with fallback chain: Neural Service -> WebLLM -> Gemini
+      const result = await neuralLLMClient.generate(messages, {
+        memoryContext: llmMemoryContext,
+        temperature: 0.7,
+        maxTokens: 1024,
+      });
+
+      console.log('[Orchestrator] LLM Response:', {
+        provider: result.provider,
+        latencyMs: result.latencyMs,
+        memoryInjected: result.memoryInjected,
+        fallbackReason: result.fallbackReason,
       });
 
       return {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: aiResponse,
+        content: result.content,
         timestamp: Date.now(),
         metadata: {
           intent: 'general_chat',
-          source: 'cloud_ai',
+          source: result.provider,
           classification,
           mood: this.conversationContext.userMood,
           zeroLLM: false,
+          latency: result.latencyMs,
+          tokensGenerated: result.usage.completionTokens,
+          fallback: !!result.fallbackReason,
         },
       };
     } catch (error) {
-      console.warn('[Orchestrator] Cloud AI failed, using conversational fallback:', error);
+      console.warn('[Orchestrator] Neural LLM failed, using conversational fallback:', error);
       return this.handleGeneralChatFallback(message);
     }
+  }
+
+  /**
+   * Convert E-BRAIN MemoryContext to LLM-compatible format
+   * Maps the Memory type from E-BRAIN to the simpler format used by NeuralLLMClient
+   */
+  private convertToLLMMemoryContext(
+    neuralContext?: MemoryContext | null
+  ): LLMMemoryContext | undefined {
+    if (!neuralContext) {
+      return undefined;
+    }
+
+    return {
+      relevantMemories: neuralContext.relevantMemories.map((memory) => ({
+        id: memory.id,
+        type: memory.memoryType,
+        content: memory.content,
+        importance: memory.importance,
+      })),
+      similarities: neuralContext.similarities,
+      insufficientData: neuralContext.insufficientData,
+      suggestedActions: neuralContext.suggestedActions,
+      recentScans: neuralContext.recentScans?.map((scan) => ({
+        url: scan.url,
+        verdict: scan.verdict,
+        riskScore: parseFloat(scan.riskLevel) || 0, // Convert A-F to numeric if needed
+        timestamp: Date.now(), // Scan memories don't have timestamps in original format
+      })),
+      threatPatterns: neuralContext.threatPatterns?.map((tp) => ({
+        pattern: tp.signature, // ThreatPattern uses 'signature' not 'pattern'
+        confidence: tp.confidence,
+        occurrences: tp.occurrences,
+      })),
+      userProfile: neuralContext.userProfile
+        ? {
+            scanHistory: 0, // Not available in original format
+            riskTolerance: neuralContext.userProfile.riskTolerance,
+            preferredActions: [], // Not available in original format
+          }
+        : undefined,
+    };
   }
 
   private handleGeneralChatFallback(message: string): ChatMessage {

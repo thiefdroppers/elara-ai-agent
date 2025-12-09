@@ -1,0 +1,167 @@
+/**
+ * Ask Elara - Popup Launcher Styles
+ * ThiefDroppers Brand Theme
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: #020b1a;
+  color: #ffffff;
+  width: 320px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.popup-container {
+  padding: 20px;
+  background:
+    radial-gradient(ellipse at 20% 80%, rgba(3, 216, 251, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(0, 112, 243, 0.05) 0%, transparent 50%),
+    #020b1a;
+}
+
+/* Header */
+.popup-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(3, 216, 251, 0.15);
+}
+
+.logo-wrapper {
+  flex-shrink: 0;
+  filter: drop-shadow(0 4px 12px rgba(3, 216, 251, 0.2));
+}
+
+.header-text h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  background: linear-gradient(90deg, #ffffff 0%, #03d8fb 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+/* Status Bar */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #10b981;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 10px #10b981; }
+  50% { opacity: 0.7; box-shadow: 0 0 15px #10b981; }
+}
+
+.status-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #10b981;
+}
+
+/* Actions */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-btn.primary {
+  background: linear-gradient(135deg, #0070f3 0%, #03d8fb 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(0, 112, 243, 0.3);
+}
+
+.action-btn.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(3, 216, 251, 0.4);
+}
+
+.action-btn.secondary {
+  background: #0a1628;
+  border: 1px solid rgba(3, 216, 251, 0.2);
+  color: #f8fafc;
+}
+
+.action-btn.secondary:hover {
+  background: #111d32;
+  border-color: #03d8fb;
+  color: #03d8fb;
+}
+
+.action-btn:active {
+  transform: translateY(0);
+}
+
+/* Footer */
+.footer {
+  text-align: center;
+}
+
+.keyboard-hint {
+  font-size: 11px;
+  color: #64748b;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(3, 216, 251, 0.3);
+  border-radius: 3px;
+}

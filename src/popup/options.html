@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ThiefDroppers - Options</title>
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    body {
+      width: 100%;
+      min-width: 400px;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .options-container {
+      background: #1a1a2e;
+      border-radius: 12px;
+      padding: 24px;
+    }
+    h1 {
+      color: #00d4ff;
+      font-size: 24px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    h1 img {
+      width: 32px;
+      height: 32px;
+    }
+    .option-group {
+      margin-bottom: 20px;
+      padding: 16px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+    }
+    .option-group h3 {
+      color: #fff;
+      margin: 0 0 12px 0;
+      font-size: 16px;
+    }
+    .option-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+    .option-label {
+      color: #b0b0b0;
+      font-size: 14px;
+    }
+    .option-description {
+      color: #666;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .toggle {
+      position: relative;
+      width: 48px;
+      height: 24px;
+    }
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #333;
+      transition: 0.3s;
+      border-radius: 24px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #fff;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+    .toggle input:checked + .toggle-slider {
+      background-color: #00d4ff;
+    }
+    .toggle input:checked + .toggle-slider:before {
+      transform: translateX(24px);
+    }
+    select {
+      background: #2a2a3e;
+      color: #fff;
+      border: 1px solid #444;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .btn-save {
+      background: linear-gradient(135deg, #00d4ff, #0099cc);
+      color: #fff;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 20px;
+    }
+    .btn-save:hover {
+      opacity: 0.9;
+    }
+    .status {
+      text-align: center;
+      margin-top: 12px;
+      color: #00ff88;
+      font-size: 14px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .status.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="options-container">
+    <h1>
+      <img src="../assets/icons/icon48.png" alt="ThiefDroppers">
+      ThiefDroppers Options
+    </h1>
+
+    <div class="option-group">
+      <h3>Protection Settings</h3>
+      <div class="option-row">
+        <div>
+          <div class="option-label">Enable Real-time Protection</div>
+          <div class="option-description">Scan URLs as you browse</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="realtime-protection" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-row">
+        <div>
+          <div class="option-label">Block Dangerous Sites</div>
+          <div class="option-description">Automatically block high-risk phishing sites</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="auto-block" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="option-group">
+      <h3>Scan Mode</h3>
+      <div class="option-row">
+        <div>
+          <div class="option-label">Default Scan Tier</div>
+          <div class="option-description">Higher tiers are more accurate but slower</div>
+        </div>
+        <select id="scan-tier">
+          <option value="edge">Edge Only (Fast)</option>
+          <option value="hybrid" selected>Hybrid (Balanced)</option>
+          <option value="deep">Deep Scan (Thorough)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="option-group">
+      <h3>Privacy</h3>
+      <div class="option-row">
+        <div>
+          <div class="option-label">Send Anonymous Telemetry</div>
+          <div class="option-description">Help improve detection accuracy</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="telemetry">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-row">
+        <div>
+          <div class="option-label">Cache TI Data Locally</div>
+          <div class="option-description">Faster lookups, uses ~50MB storage</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="local-cache" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <button class="btn-save" id="save-btn">Save Settings</button>
+    <div class="status" id="status">Settings saved!</div>
+  </div>
+
+  <script>
+    // Load saved settings
+    chrome.storage.local.get([
+      'realtimeProtection',
+      'autoBlock',
+      'scanTier',
+      'telemetry',
+      'localCache'
+    ], (result) => {
+      document.getElementById('realtime-protection').checked = result.realtimeProtection !== false;
+      document.getElementById('auto-block').checked = result.autoBlock !== false;
+      document.getElementById('scan-tier').value = result.scanTier || 'hybrid';
+      document.getElementById('telemetry').checked = result.telemetry === true;
+      document.getElementById('local-cache').checked = result.localCache !== false;
+    });
+
+    // Save settings
+    document.getElementById('save-btn').addEventListener('click', () => {
+      const settings = {
+        realtimeProtection: document.getElementById('realtime-protection').checked,
+        autoBlock: document.getElementById('auto-block').checked,
+        scanTier: document.getElementById('scan-tier').value,
+        telemetry: document.getElementById('telemetry').checked,
+        localCache: document.getElementById('local-cache').checked
+      };
+
+      chrome.storage.local.set(settings, () => {
+        const status = document.getElementById('status');
+        status.classList.add('show');
+        setTimeout(() => status.classList.remove('show'), 2000);
+      });
+    });
+  </script>
+</body>
+</html>
